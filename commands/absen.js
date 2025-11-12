@@ -31,10 +31,11 @@ const command = {
           .setColor(config.colors.warning)
           .setTitle('Akun Sudah Terdaftar')
           .setDescription(
-            'Akun Anda sudah terdaftar dalam sistem.\n\n' +
+            'Akunmu sudah terdaftar dalam sistem.\n\n' +
+            `**Nama:** ${existingUser.studentName || 'N/A'}\n` +
             `**NIM:** ${existingUser.nim}\n` +
-            `**Status:** ${existingUser.isActive ? '✅ Aktif' : '❌ Nonaktif'}\n\n` +
-            'Gunakan `/status` untuk melihat detail atau `/update` untuk mengubah data.'
+            `**Status:** ${existingUser.isActive ? '`Aktif`' : '`Nonaktif`'}\n\n` +
+            'Gunakan </status:1438192158896291851> untuk melihat detail atau </toggle:1438192158896291852> untuk mengaktifkan/menonaktifkan'
           )
           .setTimestamp();
 
@@ -96,7 +97,7 @@ const command = {
       const statusEmbed = new EmbedBuilder()
         .setColor(config.colors.info)
         .setTitle('Memproses Registrasi')
-        .setDescription('Sedang memverifikasi akun SIMA Anda...')
+        .setDescription('Sedang memverifikasi akun SIMA-mu...')
         .addFields(
           { name: 'NIM', value: nim, inline: true },
           { name: 'Status', value: 'Connecting...', inline: true }
@@ -132,6 +133,7 @@ const command = {
       const userData = {
         userId: interaction.user.id,
         username: interaction.user.username,
+        studentName: loginResult.studentName || 'Unknown', // Student name from SIMA
         nim: nim,
         password: password, // Will be encrypted by UserManager
         cookies: loginResult.cookies,
@@ -142,12 +144,20 @@ const command = {
 
       await userManager.saveUser(userData);
 
-      logger.success(`User registered successfully: ${nim}`);
+      logger.success(`User registered successfully: ${nim} (${userData.studentName})`);
 
       // Fetch initial data
       statusEmbed
         .setDescription('Login berhasil!\nMengambil data mata kuliah...')
-        .spliceFields(1, 1, { name: 'Status', value: 'Connected', inline: true });
+        .spliceFields(1, 1, { name: 'Status', value: '✅ Connected', inline: true });
+
+      if (loginResult.studentName) {
+        statusEmbed.addFields({ 
+          name: 'Nama', 
+          value: loginResult.studentName, 
+          inline: false 
+        });
+      }
 
       await interaction.editReply({ embeds: [statusEmbed] });
 
@@ -170,18 +180,19 @@ const command = {
         .setColor(config.colors.success)
         .setTitle('Registrasi Berhasil!')
         .setDescription(
-          'Akun SIMA Anda telah terdaftar dalam sistem absensi otomatis!\n\n' +
+          'Akun SIMA-mu telah terdaftar dalam sistem absensi otomatis!\n\n' +
           '**Fitur yang aktif:**\n' +
           '- Pengecekan materi baru otomatis\n' +
           '- Absensi mandiri otomatis\n' +
           '- Notifikasi materi baru\n' +
           '- Laporan kehadiran\n\n' +
-          `**Interval pengecekan:** Setiap ${config.scheduler.interval} menit`
+          `**Interval pengecekan:** Setiap \`${config.scheduler.interval}\` menit`
         )
         .addFields(
-          { name: 'NIM', value: nim, inline: true },
-          { name: 'Mata Kuliah', value: `${makul.length} terdaftar`, inline: true },
-          { name: 'Status', value: '🟢 Aktif', inline: true }
+          { name: '👤 Nama', value: userData.studentName, inline: false },
+          { name: '🎓 NIM', value: nim, inline: true },
+          { name: '📚 Mata Kuliah', value: `${makul.length} terdaftar`, inline: true },
+          { name: '📊 Status', value: 'Aktif', inline: true }
         )
         .setFooter({ text: 'Gunakan /status untuk melihat detail lengkap' })
         .setTimestamp();
