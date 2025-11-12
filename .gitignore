@@ -54,3 +54,4 @@ __pycache__/
 
 # Tesseract cache
 .tesseract/
+eng.traineddata
