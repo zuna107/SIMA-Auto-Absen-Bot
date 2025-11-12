@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment variables
+.env
+
+# User data & sensitive files
+public/user.json
+public/lastMateri.json
+public/global/
+public/logs/
+
+# Backup files
+*.backup
+*.bak
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test files
+coverage/
+.nyc_output/
+
+# Build files
+dist/
+build/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+# CAPTCHA cache (if any)
+cap.png
+captcha_*.png
+
+# Python cache (from OCR testing)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Tesseract cache
+.tesseract/
