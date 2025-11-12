@@ -23,29 +23,29 @@ class NotificationService {
     try {
       const embed = new EmbedBuilder()
         .setColor(config.colors.info)
-        .setTitle('📚 Materi Baru Terdeteksi!')
+        .setTitle('Materi Baru Terdeteksi')
         .setDescription(
-          `Materi baru telah ditambahkan pada mata kuliah **${makul.nama}**`
+          `Materi baru telah ditambahkan pada mata kuliah \`${makul.nama}\``
         )
         .addFields(
-          { name: '📖 Mata Kuliah', value: makul.nama, inline: false },
-          { name: '📝 Judul Materi', value: materi.title, inline: false },
-          { name: '💬 Bahasan', value: materi.bahasan || '-', inline: false },
+          { name: 'Mata Kuliah', value: makul.nama, inline: false },
+          { name: 'Judul Materi', value: materi.title, inline: false },
+          { name: 'Bahasan', value: materi.bahasan || '-', inline: false },
           { 
-            name: '⏰ Waktu Kehadiran', 
+            name: 'Waktu Kehadiran', 
             value: materi.waktuKehadiran || '-', 
             inline: true 
           },
           { 
-            name: '📅 Waktu Diskusi', 
+            name: 'Waktu Diskusi', 
             value: materi.waktuDiskusi || '-', 
             inline: true 
           },
           {
-            name: '✅ Tipe Absensi',
+            name: 'Tipe Absensi',
             value: materi.isManual 
-              ? '👨‍🏫 Manual (Oleh Dosen)' 
-              : '🤖 Mandiri (Auto)',
+              ? 'Manual (Oleh Dosen)' 
+              : 'Mandiri (Auto-absen)',
             inline: false,
           }
         )
@@ -79,20 +79,20 @@ class NotificationService {
     try {
       const embed = new EmbedBuilder()
         .setColor(config.colors.success)
-        .setTitle('✅ Absen Berhasil!')
+        .setTitle('Absen Berhasil!')
         .setDescription(
           `Berhasil absen pada materi **${materi.title}**`
         )
         .addFields(
-          { name: '📖 Mata Kuliah', value: makul.nama, inline: false },
-          { name: '📝 Materi', value: materi.title, inline: false },
+          { name: 'Mata Kuliah', value: makul.nama, inline: false },
+          { name: 'Materi', value: materi.title, inline: false },
           { 
-            name: '⏰ Waktu Absen', 
+            name: 'Waktu Absen', 
             value: timestamp || 'Baru saja', 
             inline: true 
           },
           { 
-            name: '📊 Status', 
+            name: 'Status', 
             value: '✅ Hadir', 
             inline: true 
           }
@@ -113,18 +113,18 @@ class NotificationService {
     try {
       const embed = new EmbedBuilder()
         .setColor(config.colors.primary)
-        .setTitle('📊 Ringkasan Pengecekan')
+        .setTitle('Ringkasan Pengecekan')
         .setDescription(
           `Pengecekan otomatis selesai dilakukan.`
         )
         .addFields(
           { 
-            name: '📚 Materi Baru', 
+            name: 'Materi Baru', 
             value: `${newMateriCount} materi`, 
             inline: true 
           },
           { 
-            name: '✅ Absen Berhasil', 
+            name: 'Absen Berhasil', 
             value: `${absencesCount} absensi`, 
             inline: true 
           }
@@ -148,7 +148,7 @@ class NotificationService {
     try {
       const embed = new EmbedBuilder()
         .setColor(config.colors.error)
-        .setTitle('❌ Terjadi Kesalahan')
+        .setTitle('Terjadi Kesalahan')
         .setDescription(
           `Sistem mengalami kesalahan saat memproses data Anda:\n\n` +
           `\`\`\`${errorMessage}\`\`\``
