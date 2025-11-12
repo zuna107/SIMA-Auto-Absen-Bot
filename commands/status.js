@@ -22,10 +22,10 @@ const command = {
       if (!user) {
         const embed = new EmbedBuilder()
           .setColor(config.colors.warning)
-          .setTitle('⚠️ Belum Terdaftar')
+          .setTitle('Akun Belum Terdaftar')
           .setDescription(
-            'Anda belum mendaftarkan akun SIMA.\n\n' +
-            'Gunakan `/absen` untuk mendaftar dan mengaktifkan sistem absensi otomatis.'
+            'Kamu belum mendaftarkan akun SIMA.\n\n' +
+            'Gunakan </absen:1438192158896291850> untuk mendaftar dan mengaktifkan sistem absensi otomatis.'
           )
           .setTimestamp();
 
@@ -39,20 +39,20 @@ const command = {
         (now - registeredDate) / (1000 * 60 * 60 * 24)
       );
 
-      // Format last check time
-      let lastCheckStr = 'Belum pernah';
-      if (user.lastCheck) {
-        const lastCheck = new Date(user.lastCheck);
-        const minutesAgo = Math.floor((now - lastCheck) / (1000 * 60));
+      // // Format last check time
+      // let lastCheckStr = 'Belum pernah';
+      // if (user.lastCheck) {
+      //   const lastCheck = new Date(user.lastCheck);
+      //   const minutesAgo = Math.floor((now - lastCheck) / (1000 * 60));
         
-        if (minutesAgo < 60) {
-          lastCheckStr = `${minutesAgo} menit yang lalu`;
-        } else if (minutesAgo < 1440) {
-          lastCheckStr = `${Math.floor(minutesAgo / 60)} jam yang lalu`;
-        } else {
-          lastCheckStr = lastCheck.toLocaleString('id-ID');
-        }
-      }
+      //   if (minutesAgo < 60) {
+      //     lastCheckStr = `${minutesAgo} menit yang lalu`;
+      //   } else if (minutesAgo < 1440) {
+      //     lastCheckStr = `${Math.floor(minutesAgo / 60)} jam yang lalu`;
+      //   } else {
+      //     lastCheckStr = lastCheck.toLocaleString('id-ID');
+      //   }
+      // }
 
       // Calculate success rate
       const stats = user.stats || { totalChecks: 0, totalAbsences: 0, failedAttempts: 0 };
@@ -62,7 +62,7 @@ const command = {
 
       const embed = new EmbedBuilder()
         .setColor(user.isActive ? config.colors.success : config.colors.error)
-        .setTitle('📊 Status Akun & Statistik')
+        .setTitle('Status Akun & Statistik')
         .setDescription(
           user.isActive
             ? '🟢 Sistem absensi otomatis **AKTIF**'
@@ -72,34 +72,38 @@ const command = {
           {
             name: '👤 Informasi Akun',
             value:
-              `**NIM:** ${user.nim}\n` +
-              `**Username:** ${user.username}\n` +
-              `**Status:** ${user.isActive ? '✅ Aktif' : '❌ Nonaktif'}`,
+              `- NIM: ${user.nim}\n` +
+              `- Username: ${user.studentName}\n` +
+              `- Status: ${user.isActive ? '`Aktif`' : '`Nonaktif`'}`,
             inline: false,
           },
           {
             name: '📅 Waktu',
             value:
-              `**Terdaftar:** ${registeredDate.toLocaleDateString('id-ID')}\n` +
-              `**Hari Aktif:** ${daysSinceRegistration} hari\n` +
-              `**Cek Terakhir:** ${lastCheckStr}`,
+              `- Terdaftar: <t:${Math.floor(registeredDate.getTime() / 1000)}:D>\n` +
+              `- Hari Aktif: <t:${Math.floor(registeredDate.getTime() / 1000)}:R>\n` +
+              `- Cek Terakhir: ${
+                  user.lastCheck
+                    ? `<t:${Math.floor(new Date(user.lastCheck).getTime() / 1000)}:R>`
+                    : 'Belum pernah'
+                }`,
             inline: false,
           },
           {
             name: '📈 Statistik',
             value:
-              `**Total Pengecekan:** ${stats.totalChecks}\n` +
-              `**Total Absensi:** ${stats.totalAbsences}\n` +
-              `**Gagal:** ${stats.failedAttempts}\n` +
-              `**Success Rate:** ${successRate}%`,
+              `- Total Pengecekan: -${stats.totalChecks}\n` +
+              `- Total Absensi: ${stats.totalAbsences}\n` +
+              `- Gagal: ${stats.failedAttempts}\n` +
+              `- Success Rate: ${successRate}%`,
             inline: false,
           },
           {
             name: '⚙️ Konfigurasi',
             value:
-              `**Interval:** Setiap ${config.scheduler.interval} menit\n` +
-              `**Auto-Absen:** ${user.isActive ? 'Aktif' : 'Nonaktif'}\n` +
-              `**Notifikasi:** Aktif`,
+              `Interval: Setiap \`${config.scheduler.interval}\` menit\n` +
+              `Auto-Absen: ${user.isActive ? '`Aktif`' : '`Nonaktif`'}\n` +
+              `Notifikasi: \`Aktif\``,
             inline: false,
           }
         )
