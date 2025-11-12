@@ -117,6 +117,7 @@ class UserManager {
       const encryptedData = {
         userId: userData.userId,
         username: userData.username,
+        studentName: userData.studentName || null, // Store student name
         nim: userData.nim,
         encryptedPassword: this.encrypt(userData.password),
         encryptedCookies: userData.cookies 
@@ -136,7 +137,7 @@ class UserManager {
       users[userData.userId] = encryptedData;
       await this.saveUsers(users);
 
-      this.logger.success(`User saved: ${userData.nim} (${userData.userId})`);
+      this.logger.success(`User saved: ${userData.studentName || userData.nim} (${userData.userId})`);
       return true;
     } catch (error) {
       this.logger.error('Failed to save user:', error);
