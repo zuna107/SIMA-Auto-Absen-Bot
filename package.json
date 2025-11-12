@@ -1,22 +1,36 @@
 {
-  "name": "absen_bot",
+  "name": "sima-absen-bot",
   "version": "1.0.0",
-  "description": "",
-  "license": "ISC",
-  "author": "zetsuna",
-  "type": "module",
+  "description": "Automated SIMA attendance system with Discord bot integration",
   "main": "index.js",
+  "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node --test"
   },
+  "keywords": [
+    "discord",
+    "bot",
+    "attendance",
+    "automation",
+    "sima",
+    "unsiq"
+  ],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
-    "discord.js": "^14.16.3",
-    "dotenv": "^16.3.2",
-    "axios": "^1.7.2",
-    "cheerio": "^1.0.0",
-    "tesseract.js": "^5.1.0",
+    "axios": "^1.6.2",
+    "cheerio": "^1.0.0-rc.12",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1",
     "node-cron": "^3.0.3",
-    "crypto-js": "^4.2.0",
-    "lowdb": "^6.0.1"
+    "tesseract.js": "^5.0.4"
+  },
+  "devDependencies": {
+    "eslint": "^8.55.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
