@@ -36,19 +36,10 @@ class AbsenBot {
   async init() {
     try {
       this.logger.info('Initializing Absen Bot...');
-
-      // Ensure directories exist
       await this.ensureDirectories();
-
-      // Setup event listeners
       this.setupEventListeners();
-
-      // Load commands
       await this.commandHandler.loadCommands();
-
-      // Login to Discord
       await this.client.login(process.env.DISCORD_TOKEN);
-
       this.logger.success('Bot initialized successfully!');
     } catch (error) {
       this.logger.error('Failed to initialize bot:', error);
@@ -71,7 +62,7 @@ class AbsenBot {
       }
     }
 
-    // Ensure JSON files exist
+    // Check JSON files exist
     const files = {
       './public/user.json': '{}',
       './public/lastMateri.json': '{}',
@@ -89,11 +80,8 @@ class AbsenBot {
   }
 
   setupEventListeners() {
-    // Ready event
     this.client.once(Events.ClientReady, async (client) => {
-      this.logger.success(`✓ Logged in as ${client.user.tag}`);
-      
-      // Set bot status
+      this.logger.success(`Logged in as ${client.user.tag}`);
       client.user.setPresence({
         activities: [{ name: 'SIMA Attendance', type: ActivityType.Watching }],
         status: 'online',
@@ -101,8 +89,6 @@ class AbsenBot {
 
       // Register slash commands
       await this.commandHandler.registerCommands();
-
-      // Leave all guilds (bot hanya untuk User Install)
       await this.leaveAllGuilds();
 
       // Start scheduler
@@ -120,7 +106,7 @@ class AbsenBot {
         this.logger.error('Interaction error:', error);
         
         const errorMessage = {
-          content: '❌ Terjadi kesalahan saat memproses perintah.',
+          content: 'An error occurred while processing the command.',
           ephemeral: true,
         };
 
