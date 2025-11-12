@@ -22,10 +22,10 @@ const command = {
       if (!user) {
         const embed = new EmbedBuilder()
           .setColor(config.colors.warning)
-          .setTitle('⚠️ Belum Terdaftar')
+          .setTitle('Akun Belum Terdaftar')
           .setDescription(
-            'Anda belum mendaftarkan akun SIMA.\n\n' +
-            'Gunakan `/absen` untuk mendaftar terlebih dahulu.'
+            'Kamu belum mendaftarkan akun SIMA.\n\n' +
+            'Gunakan </absen:1438192158896291850> untuk mendaftar terlebih dahulu.'
           )
           .setTimestamp();
 
@@ -40,24 +40,24 @@ const command = {
 
       const embed = new EmbedBuilder()
         .setColor(newStatus ? config.colors.success : config.colors.warning)
-        .setTitle(newStatus ? '✅ Sistem Diaktifkan' : '⏸️ Sistem Dinonaktifkan')
+        .setTitle(newStatus ? 'Sistem Diaktifkan' : 'Sistem Dinonaktifkan')
         .setDescription(
           newStatus
             ? '🟢 Sistem absensi otomatis telah **DIAKTIFKAN**\n\n' +
               '**Fitur aktif:**\n' +
-              '✅ Pengecekan materi baru otomatis\n' +
-              '✅ Absensi mandiri otomatis\n' +
-              '✅ Notifikasi real-time\n\n' +
+              '- Pengecekan materi baru otomatis\n' +
+              '- Absensi mandiri otomatis\n' +
+              '- Notifikasi real-time\n\n' +
               `Pengecekan akan dilakukan setiap ${config.scheduler.interval} menit.`
             : '🔴 Sistem absensi otomatis telah **DINONAKTIFKAN**\n\n' +
               '**Status:**\n' +
-              '⏸️ Pengecekan otomatis dihentikan\n' +
-              '⏸️ Tidak ada absensi otomatis\n' +
-              '⏸️ Notifikasi ditangguhkan\n\n' +
-              'Data Anda tetap tersimpan dan aman.'
+              '- Pengecekan otomatis dihentikan\n' +
+              '- Tidak ada absensi otomatis\n' +
+              '- Notifikasi ditangguhkan\n\n' +
+              'Datamu tetap tersimpan dan aman.'
         )
         .addFields({
-          name: '📊 Status',
+          name: 'Status',
           value: newStatus ? '🟢 Aktif' : '🔴 Nonaktif',
           inline: true,
         })
