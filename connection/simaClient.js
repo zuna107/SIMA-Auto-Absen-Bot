@@ -12,7 +12,7 @@ class SIMAClient {
     
     this.axiosInstance = axios.create({
       timeout: config.sima.timeout,
-      maxRedirects: config.request.maxRedirects,
+      maxRedirects: 10, //Allow redirects
       headers: {
         'User-Agent': this.userAgent,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -22,6 +22,26 @@ class SIMAClient {
         'Upgrade-Insecure-Requests': '1',
       },
     });
+
+    //Add axios interceptor to capture cookies from all requests
+    this.axiosInstance.interceptors.response.use(
+      (response) => {
+        // Capture cookies from each response
+        if (response.headers['set-cookie']) {
+          const newCookies = this.parseCookies(response.headers['set-cookie']);
+          this.cookies = { ...this.cookies, ...newCookies };
+        }
+        return response;
+      },
+      (error) => {
+        // Also capture cookies from error responses
+        if (error.response && error.response.headers['set-cookie']) {
+          const newCookies = this.parseCookies(error.response.headers['set-cookie']);
+          this.cookies = { ...this.cookies, ...newCookies };
+        }
+        return Promise.reject(error);
+      }
+    );
   }
 
   getRandomUserAgent() {
@@ -75,7 +95,7 @@ class SIMAClient {
       );
 
       let cleanText = text.trim()
-        .replace(/×/g, 'x')
+        .replace(/Ã—/g, 'x')
         .replace(/X/g, 'x')
         .replace(/\s+/g, '');
 
@@ -85,14 +105,12 @@ class SIMAClient {
       const match = cleanText.match(/(\d+)\s*([+\-xX*])\s*(\d+)/);
 
       if (!match) {
-        // Fallback for single digit operations
-        if (cleanText.length === 3 && 
-            /\d/.test(cleanText[0]) && 
-            /\d/.test(cleanText[2])) {
+        if (cleanText.length === 2 && /\d/.test(cleanText[0]) && /\d/.test(cleanText[1])) {
+          // Assume multiplication for two consecutive digits
           const a = parseInt(cleanText[0]);
-          const op = cleanText[1];
-          const b = parseInt(cleanText[2]);
-          return this.calculateCaptcha(a, op, b);
+          const b = parseInt(cleanText[1]);
+          this.logger.debug(`Fallback: Assuming ${a} x ${b}`);
+          return a * b;
         }
         throw new Error(`Failed to parse CAPTCHA: ${cleanText}`);
       }
@@ -123,17 +141,80 @@ class SIMAClient {
     }
   }
 
+  extractStudentName($, nim) {
+    try {
+      // Method 1: Extract from logo-normal div structure
+      const logoNormal = $('.logo-normal, .simple-text.logo-normal');
+      if (logoNormal.length > 0) {
+        const divContent = logoNormal.find('div font');
+        if (divContent.length > 0) {
+          const text = divContent.text().trim();
+          // Split by NIM and get the name part
+          const parts = text.split(nim);
+          if (parts.length > 1) {
+            const name = parts[1].trim();
+            if (name && name.length > 3) {
+              this.logger.info('Student name extracted:', name);
+              return name;
+            }
+          }
+        }
+      }
+
+      // Method 2: Look for profile section with NIM
+      const profileText = $('body').text();
+      const nimIndex = profileText.indexOf(nim);
+      if (nimIndex !== -1) {
+        // Get text after NIM (usually the name follows)
+        const afterNim = profileText.substring(nimIndex + nim.length, nimIndex + nim.length + 100);
+        const lines = afterNim.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        if (lines.length > 0 && lines[0].length > 3) {
+          const name = lines[0].trim();
+          this.logger.info('Student name extracted (method 2):', name);
+          return name;
+        }
+      }
+
+      // Method 3: Look for common patterns near NIM
+      let foundName = null;
+      $('div, span, font').each((i, el) => {
+        const text = $(el).text().trim();
+        if (text.includes(nim)) {
+          const parts = text.split(nim);
+          if (parts.length > 1) {
+            const potentialName = parts[1].trim().split('\n')[0].trim();
+            if (potentialName.length > 3 && potentialName.length < 50) {
+              this.logger.info('Student name extracted (method 3):', potentialName);
+              foundName = potentialName;
+              return false; // break
+            }
+          }
+        }
+      });
+      
+      if (foundName) return foundName;
+
+      this.logger.warn('Could not extract student name from page');
+      return null;
+    } catch (error) {
+      this.logger.error('Error extracting student name:', error);
+      return null;
+    }
+  }
+
   async login(nim, password, retries = 3) {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         this.logger.info(`Login attempt ${attempt}/${retries} for NIM: ${nim}`);
 
-        // Step 1: Get initial session
+        //Reset cookies at the start of each attempt
+        this.cookies = {};
+
+        // Step 1: Get initial session with proper URL parameter
         await this.delay();
         const initResponse = await this.axiosInstance.get(config.sima.loginUrl);
         
-        this.cookies = this.parseCookies(initResponse.headers['set-cookie']);
-        this.logger.debug('Session cookies obtained');
+        this.logger.debug('Session cookies obtained:', Object.keys(this.cookies).join(', '));
 
         // Step 2: Get CAPTCHA image
         await this.delay();
@@ -149,7 +230,7 @@ class SIMAClient {
         const captchaAnswer = await this.solveCaptcha(captchaResponse.data);
         this.logger.success(`CAPTCHA solved: ${captchaAnswer}`);
 
-        // Step 4: Submit login
+        // Step 4: Submit login with proper URL
         await this.delay();
         const loginPayload = new URLSearchParams({
           txUser: nim,
@@ -157,47 +238,77 @@ class SIMAClient {
           kdc: captchaAnswer.toString(),
         });
 
+        //Use the full URL with parameter
+        const loginUrl = `${config.sima.baseUrl}/cekadm.php?l=${config.sima.baseUrl}`;
+        
         const loginResponse = await this.axiosInstance.post(
-          config.sima.loginCheckUrl,
-          loginPayload,
+          loginUrl,
+          loginPayload.toString(),
           {
             headers: {
               Cookie: this.getCookieString(),
               'Content-Type': 'application/x-www-form-urlencoded',
+              'Referer': config.sima.loginUrl,
             },
-            maxRedirects: 0,
+            //Allow redirects to follow through to dashboard
+            maxRedirects: 10,
             validateStatus: (status) => status < 400,
           }
         );
 
-        // Update cookies
-        const newCookies = this.parseCookies(loginResponse.headers['set-cookie']);
-        this.cookies = { ...this.cookies, ...newCookies };
+        this.logger.debug('Login response URL:', loginResponse.request.res.responseUrl || loginUrl);
+        this.logger.debug('Login response status:', loginResponse.status);
 
         // Step 5: Verify login
         const $ = cheerio.load(loginResponse.data);
         
         // Check for error messages
-        const errorMsg = $('.alert-danger, .error').text().trim();
-        if (errorMsg && errorMsg.toLowerCase().includes('salah')) {
+        const errorMsg = $('.alert-danger, .error, .alert').text().trim();
+        if (errorMsg && (
+          errorMsg.toLowerCase().includes('salah') ||
+          errorMsg.toLowerCase().includes('gagal') ||
+          errorMsg.toLowerCase().includes('error')
+        )) {
+          this.logger.warn('Error message found:', errorMsg);
           throw new Error('NIM atau password salah');
         }
 
-        // Check if redirected to dashboard
-        if (loginResponse.request.res.responseUrl?.includes('index.php') || 
-            loginResponse.data.includes('Dashboard') ||
-            $('title').text().includes('Dashboard')) {
-          
+        //Better login verification
+        const finalUrl = loginResponse.request.res.responseUrl || loginUrl;
+        const pageTitle = $('title').text().toLowerCase();
+        const bodyText = $('body').text().toLowerCase();
+        
+        // Check multiple indicators of successful login
+        const isLoggedIn = 
+          finalUrl.includes('index.php') ||
+          finalUrl.includes('/kuliah/') ||
+          pageTitle.includes('dashboard') ||
+          bodyText.includes('dashboard') ||
+          bodyText.includes('selamat datang') ||
+          $('a[href*="logout"]').length > 0 ||
+          $('.user-panel').length > 0;
+
+        if (isLoggedIn) {
           this.logger.success(`Login successful for NIM: ${nim}`);
+          this.logger.debug('Final cookies:', Object.keys(this.cookies).join(', '));
+          
+          //Extract student name from profile section
+          const studentName = this.extractStudentName($, nim);
           
           return {
             success: true,
             cookies: this.cookies,
             message: 'Login berhasil',
+            studentName: studentName,
           };
         }
 
-        throw new Error('Login verification failed');
+        //Log more details for debugging
+        this.logger.debug('Page title:', pageTitle);
+        this.logger.debug('Has logout link:', $('a[href*="logout"]').length > 0);
+        this.logger.debug('Response length:', loginResponse.data.length);
+
+        throw new Error('Login verification failed - tidak ditemukan indikator login sukses');
 
       } catch (error) {
         this.logger.warn(`Login attempt ${attempt} failed:`, error.message);
