@@ -77,11 +77,11 @@ const config = {
 
   // Discord embed colors
   colors: {
-    success: 0x00ff00,
+    success: null,
     error: 0xff0000,
-    warning: 0xffaa00,
-    info: 0x0099ff,
-    primary: 0x5865f2,
+    warning: null,
+    info: null,
+    primary: null,
   },
 
   // Development mode
