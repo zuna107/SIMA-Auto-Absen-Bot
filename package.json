@@ -2,13 +2,6 @@
   "name": "sima-absen-bot",
   "version": "1.0.0",
   "description": "Automated SIMA attendance system with Discord bot integration",
-  "main": "index.js",
-  "type": "module",
-  "scripts": {
-    "start": "node index.js",
-    "dev": "node --watch index.js",
-    "test": "node --test"
-  },
   "keywords": [
     "discord",
     "bot",
@@ -17,8 +10,23 @@
     "sima",
     "unsiq"
   ],
-  "author": "",
+  "homepage": "https://github.com/zuna107/SIMA-Auto-Absen-Bot#readme",
+  "bugs": {
+    "url": "https://github.com/zuna107/SIMA-Auto-Absen-Bot/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zuna107/SIMA-Auto-Absen-Bot.git"
+  },
   "license": "MIT",
+  "author": "zuna017",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node --test"
+  },
   "dependencies": {
     "axios": "^1.6.2",
     "cheerio": "^1.0.0-rc.12",
@@ -31,6 +39,6 @@
     "eslint": "^8.55.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=24.0.0"
   }
 }
