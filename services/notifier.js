@@ -8,220 +8,194 @@ class NotificationService {
     this.logger = new Logger('Notifier');
   }
 
-  async sendDM(userId, content) {
+  async sendDM(userId, embed) {
     try {
       const user = await this.client.users.fetch(userId);
-      await user.send(content);
+      await user.send({ embeds: [embed] });
       this.logger.info(`Sent DM to user ${userId}`);
+      return true;
     } catch (error) {
-      this.logger.error(`Failed to send DM to ${userId}:`, error);
-      throw error;
+      this.logger.error(`Failed to send DM to user ${userId}:`, error);
+      return false;
     }
   }
 
   async sendNewMateriNotification(userId, makul, materi) {
-    try {
-      const embed = new EmbedBuilder()
-        .setColor(config.colors.info)
-        .setTitle('Materi Baru Terdeteksi')
-        .setDescription(
-          `Materi baru telah ditambahkan pada mata kuliah \`${makul.nama}\``
-        )
-        .addFields(
-          { name: 'Mata Kuliah', value: makul.nama, inline: false },
-          { name: 'Judul Materi', value: materi.title, inline: false },
-          { name: 'Bahasan', value: materi.bahasan || '-', inline: false },
-          { 
-            name: 'Waktu Kehadiran', 
-            value: materi.waktuKehadiran || '-', 
-            inline: true 
-          },
-          { 
-            name: 'Waktu Diskusi', 
-            value: materi.waktuDiskusi || '-', 
-            inline: true 
-          },
-          {
-            name: 'Tipe Absensi',
-            value: materi.isManual 
-              ? 'Manual (Oleh Dosen)' 
-              : 'Mandiri (Auto-absen)',
-            inline: false,
-          }
-        )
-        .setTimestamp();
+    const embed = new EmbedBuilder()
+      .setColor(config.colors.info)
+      .setTitle('Materi Baru Terdeteksi')
+      .setDescription(
+        `Materi baru telah ditambahkan pada mata kuliah \`${makul.nama}\``
+      )
+      .addFields(
+        { name: 'Mata Kuliah', value: makul.nama, inline: false },
+        { name: 'Judul Materi', value: materi.title, inline: false },
+        { name: 'Bahasan', value: materi.bahasan || 'N/A', inline: false },
+        {
+          name: 'Waktu Kehadiran',
+          value: materi.waktuKehadiran || 'N/A',
+          inline: true,
+        },
+        {
+          name: 'Waktu Diskusi',
+          value: materi.waktuDiskusi || 'N/A',
+          inline: true,
+        },
+        {
+          name: 'Tipe Absensi',
+          value: materi.isManual ? 'Manual (Oleh Dosen)' : 'Mandiri (Oleh Mahasiswa)',
+          inline: false,
+        }
+      )
+      .setTimestamp();
 
-      if (!materi.isManual && materi.isActive) {
-        embed.setFooter({ 
-          text: '🔄 Sistem akan mencoba absen otomatis...' 
-        });
-      } else if (materi.isManual) {
-        embed.setFooter({ 
-          text: '⚠️ Absensi manual oleh dosen, tidak bisa auto-absen' 
-        });
-      } else {
-        embed.setFooter({ 
-          text: '❌ Waktu kehadiran sudah berakhir' 
-        });
-      }
+    if (!materi.isManual && materi.isActive) {
+      embed.setFooter({ text: '🔄 Sistem akan mencoba absen otomatis...' });
+    }
 
-      await this.sendDM(userId, { embeds: [embed] });
-      
+    const sent = await this.sendDM(userId, embed);
+    if (sent) {
       this.logger.success(
         `Sent new materi notification to ${userId}: ${materi.title}`
       );
-    } catch (error) {
-      this.logger.error('Failed to send new materi notification:', error);
     }
+    return sent;
   }
 
   async sendAbsenceSuccess(userId, makul, materi, timestamp) {
-    try {
-      const embed = new EmbedBuilder()
-        .setColor(config.colors.success)
-        .setTitle('Absen Berhasil!')
-        .setDescription(
-          `Berhasil absen pada materi **${materi.title}**`
-        )
-        .addFields(
-          { name: 'Mata Kuliah', value: makul.nama, inline: false },
-          { name: 'Materi', value: materi.title, inline: false },
-          { 
-            name: 'Waktu Absen', 
-            value: timestamp || 'Baru saja', 
-            inline: true 
-          },
-          { 
-            name: 'Status', 
-            value: '✅ Hadir', 
-            inline: true 
-          }
-        )
-        .setTimestamp();
+    const embed = new EmbedBuilder()
+      .setColor(config.colors.success)
+      .setTitle('Absen Berhasil!')
+      .setDescription(
+        `Absensi berhasil dilakukan untuk materi \`${materi.title}\``
+      )
+      .addFields(
+        { name: 'Mata Kuliah', value: makul.nama, inline: false },
+        { name: 'Materi', value: materi.title, inline: false },
+        {
+          name: 'Waktu Absen',
+          value: timestamp || 'Tidak diketahui',
+          inline: true,
+        },
+        {
+          name: 'Status',
+          value: '🟢 Terverifikasi',
+          inline: true,
+        }
+      )
+      .setFooter({ text: 'Kehadiranmu telah tercatat dalam sistem SIMA' })
+      .setTimestamp();
 
-      await this.sendDM(userId, { embeds: [embed] });
-      
-      this.logger.success(
-        `Sent absence success notification to ${userId}`
-      );
-    } catch (error) {
-      this.logger.error('Failed to send absence success notification:', error);
+    const sent = await this.sendDM(userId, embed);
+    if (sent) {
+      this.logger.success(`Sent absence success to ${userId}`);
     }
+    return sent;
+  }
+
+  async sendAbsenceUnverified(userId, makul, materi) {
+    const embed = new EmbedBuilder()
+      .setColor(config.colors.warning)
+      .setTitle('Absen Dilakukan (Belum Terverifikasi)')
+      .setDescription(
+        `Sistem telah melakukan absensi untuk materi \`${materi.title}\`, ` +
+        `namun belum dapat memverifikasi kehadiran Anda di data SIMA.\n\n` +
+        `**Kemungkinan penyebab:**\n` +
+        `• Server SIMA sedang lambat memproses\n` +
+        `• Format data kehadiran berubah\n` +
+        `• Absensi mungkin berhasil namun belum muncul di sistem\n\n` +
+        `**Rekomendasi:** Silakan cek manual di SIMA untuk memastikan.`
+      )
+      .addFields(
+        { name: 'Mata Kuliah', value: makul.nama, inline: false },
+        { name: 'Materi', value: materi.title, inline: false },
+        {
+          name: '🔗 Link Kehadiran',
+          value: materi.links.kehadiran 
+            ? `[Cek Manual](${materi.links.kehadiran})` 
+            : 'Tidak tersedia',
+          inline: false,
+        }
+      )
+      .setFooter({ text: 'Mohon verifikasi manual melalui SIMA' })
+      .setTimestamp();
+
+    const sent = await this.sendDM(userId, embed);
+    if (sent) {
+      this.logger.info(`Sent unverified absence notification to ${userId}`);
+    }
+    return sent;
   }
 
   async sendCheckSummary(userId, newMateriCount, absencesCount) {
-    try {
-      const embed = new EmbedBuilder()
-        .setColor(config.colors.primary)
-        .setTitle('Ringkasan Pengecekan')
-        .setDescription(
-          `Pengecekan otomatis selesai dilakukan.`
-        )
-        .addFields(
-          { 
-            name: 'Materi Baru', 
-            value: `${newMateriCount} materi`, 
-            inline: true 
-          },
-          { 
-            name: 'Absen Berhasil', 
-            value: `${absencesCount} absensi`, 
-            inline: true 
-          }
-        )
-        .setFooter({ 
-          text: `Pengecekan berikutnya dalam ${config.scheduler.interval} menit` 
-        })
-        .setTimestamp();
+    const embed = new EmbedBuilder()
+      .setColor(config.colors.primary)
+      .setTitle('Ringkasan Pengecekan')
+      .setDescription('Pengecekan materi baru telah selesai')
+      .addFields(
+        {
+          name: 'Materi Baru',
+          value: `${newMateriCount} materi`,
+          inline: true,
+        },
+        {
+          name: 'Absen Berhasil',
+          value: `${absencesCount} absensi`,
+          inline: true,
+        }
+      )
+      .setTimestamp();
 
-      await this.sendDM(userId, { embeds: [embed] });
-      
-      this.logger.info(
-        `Sent check summary to ${userId}: ${newMateriCount} new, ${absencesCount} absences`
-      );
-    } catch (error) {
-      this.logger.error('Failed to send check summary:', error);
-    }
+    await this.sendDM(userId, embed);
   }
 
   async sendError(userId, errorMessage) {
-    try {
-      const embed = new EmbedBuilder()
-        .setColor(config.colors.error)
-        .setTitle('Terjadi Kesalahan')
-        .setDescription(
-          `Sistem mengalami kesalahan saat memproses data Anda:\n\n` +
-          `\`\`\`${errorMessage}\`\`\``
-        )
-        .setFooter({ 
-          text: 'Sistem akan mencoba lagi pada pengecekan berikutnya' 
-        })
-        .setTimestamp();
+    const embed = new EmbedBuilder()
+      .setColor(config.colors.error)
+      .setTitle('Terjadi Kesalahan')
+      .setDescription(
+        `Terjadi kesalahan saat memproses absensi:\n\`\`\`${errorMessage}\`\`\``
+      )
+      .setFooter({ text: 'Sistem akan mencoba lagi pada pengecekan berikutnya' })
+      .setTimestamp();
 
-      await this.sendDM(userId, { embeds: [embed] });
-      
-      this.logger.info(`Sent error notification to ${userId}`);
-    } catch (error) {
-      this.logger.error('Failed to send error notification:', error);
-    }
+    await this.sendDM(userId, embed);
   }
 
-  async sendRegistrationSuccess(userId, nim, makulCount) {
-    try {
-      const embed = new EmbedBuilder()
-        .setColor(config.colors.success)
-        .setTitle('🎉 Registrasi Berhasil!')
-        .setDescription(
-          'Akun SIMA Anda telah berhasil didaftarkan dalam sistem absensi otomatis!'
-        )
-        .addFields(
-          { name: 'NIM', value: nim, inline: true },
-          { name: 'Mata Kuliah', value: `${makulCount} terdaftar`, inline: true },
-          { name: 'Status', value: '🟢 Aktif', inline: true },
-          {
-            name: '⚙️ Fitur Aktif',
-            value: 
-              '✅ Pengecekan materi baru otomatis\n' +
-              '✅ Absensi mandiri otomatis\n' +
-              '✅ Notifikasi real-time\n' +
-              '✅ Laporan kehadiran',
-            inline: false,
-          }
-        )
-        .setFooter({ 
-          text: `Pengecekan dilakukan setiap ${config.scheduler.interval} menit` 
-        })
-        .setTimestamp();
+  async sendReloginNotification(userId, nim) {
+    const embed = new EmbedBuilder()
+      .setColor(config.colors.warning)
+      .setTitle('Re-login Diperlukan')
+      .setDescription(
+        `Sesi SIMA untuk NIM **${nim}** telah expired.\n` +
+        `Sistem sedang melakukan login ulang...`
+      )
+      .setTimestamp();
 
-      await this.sendDM(userId, { embeds: [embed] });
-      
-      this.logger.success(
-        `Sent registration success to ${userId}`
-      );
-    } catch (error) {
-      this.logger.error('Failed to send registration success:', error);
-    }
+    await this.sendDM(userId, embed);
   }
 
-  async sendLoginExpired(userId) {
-    try {
-      const embed = new EmbedBuilder()
-        .setColor(config.colors.warning)
-        .setTitle('Sesi Login Kadaluarsa')
-        .setDescription(
-          'Sesi login SIMA Anda telah kadaluarsa. Sistem mencoba login ulang secara otomatis.'
-        )
-        .setFooter({ 
-          text: 'Jika masalah berlanjut, gunakan /absen untuk registrasi ulang' 
-        })
-        .setTimestamp();
+  async sendReloginSuccess(userId) {
+    const embed = new EmbedBuilder()
+      .setColor(config.colors.success)
+      .setTitle('Re-login Berhasil')
+      .setDescription('Sesi SIMA telah diperbarui. Pengecekan dilanjutkan.')
+      .setTimestamp();
 
-      await this.sendDM(userId, { embeds: [embed] });
-      
-      this.logger.info(`Sent login expired notification to ${userId}`);
-    } catch (error) {
-      this.logger.error('Failed to send login expired notification:', error);
-    }
+    await this.sendDM(userId, embed);
+  }
+
+  async sendReloginFailed(userId, error) {
+    const embed = new EmbedBuilder()
+      .setColor(config.colors.error)
+      .setTitle('Re-login Gagal')
+      .setDescription(
+        `Gagal melakukan login ulang ke SIMA:\n\`\`\`${error}\`\`\`\n\n` +
+        `Silakan gunakan command \`/update\` untuk memperbarui kredensial Anda.`
+      )
+      .setTimestamp();
+
+    await this.sendDM(userId, embed);
   }
 }
 

@@ -82,7 +82,7 @@ class SchedulerService {
 
   async checkUserMateri(user) {
     try {
-      this.logger.info(`Checking materials for ${user.nim}...`);
+      this.logger.info(`Checking materials for ${user.nim} (${user.studentName || 'Unknown'})...`);
 
       // Update last check time
       await this.userManager.updateUser(user.userId, {
@@ -145,14 +145,14 @@ class SchedulerService {
 
             // Process each new materi
             for (const materi of newMateri) {
-              await this.processNewMateri(
+              const absenceResult = await this.processNewMateri(
                 user,
                 mk,
                 materi,
                 simaClient
               );
 
-              if (!materi.isManual && materi.isActive) {
+              if (absenceResult && absenceResult.success) {
                 absencesCompleted++;
               }
             }
@@ -219,17 +219,17 @@ class SchedulerService {
       // Check if attendance is required and possible
       if (materi.isManual) {
         this.logger.info('Manual attendance by lecturer, skipping auto-absen');
-        return;
+        return { success: false, reason: 'manual' };
       }
 
       if (!materi.isActive) {
         this.logger.info('Attendance period ended, skipping');
-        return;
+        return { success: false, reason: 'inactive' };
       }
 
       if (!materi.links.diskusi) {
         this.logger.warn('No discussion link found, cannot auto-absen');
-        return;
+        return { success: false, reason: 'no_link' };
       }
 
       // Perform auto-attendance
@@ -240,30 +240,80 @@ class SchedulerService {
       const absenResult = await simaClient.absenMateri(materi.links.diskusi);
 
       if (absenResult.success) {
-        await this.delay(2000);
+        this.logger.success('Attendance request completed');
+        
+        //Wait longer for server to process attendance
+        await this.delay(3000);
 
         // Verify attendance
         if (materi.links.kehadiran) {
-          const kehadiranCheck = await simaClient.cekKehadiran(
-            materi.links.kehadiran,
-            user.nim
+          //Retry verification up to 3 times
+          let kehadiranCheck = null;
+          let verificationAttempts = 0;
+          const maxVerificationAttempts = 3;
+
+          while (verificationAttempts < maxVerificationAttempts) {
+            verificationAttempts++;
+            
+            this.logger.info(
+              `Verifying attendance (attempt ${verificationAttempts}/${maxVerificationAttempts})...`
+            );
+
+            kehadiranCheck = await simaClient.cekKehadiran(
+              materi.links.kehadiran,
+              user.nim
+            );
+
+            if (kehadiranCheck.isPresent) {
+              this.logger.success(
+                `✓ Attendance verified for ${materi.title}` +
+                (kehadiranCheck.timestamp ? ` at ${kehadiranCheck.timestamp}` : '')
+              );
+              
+              await this.userManager.incrementStats(user.userId, 'totalAbsences');
+              
+              await this.notifier.sendAbsenceSuccess(
+                user.userId,
+                makul,
+                materi,
+                kehadiranCheck.timestamp
+              );
+
+              return { success: true, verified: true };
+            }
+
+            // If not found, wait before retry
+            if (verificationAttempts < maxVerificationAttempts) {
+              this.logger.warn(
+                `Attendance not found yet, waiting before retry...`
+              );
+              await this.delay(5000);
+            }
+          }
+
+          //If still not verified after retries, log warning but consider it might be successful
+          this.logger.warn(
+            `⚠ Attendance not verified after ${maxVerificationAttempts} attempts. ` +
+            `This might be a parsing issue or server delay.`
+          );
+          
+          // Still notify user but mention it's unverified
+          await this.notifier.sendAbsenceUnverified(
+            user.userId,
+            makul,
+            materi
           );
 
-          if (kehadiranCheck.isPresent) {
-            this.logger.success(`Attendance verified for ${materi.title}`);
-            
-            await this.userManager.incrementStats(user.userId, 'totalAbsences');
-            
-            await this.notifier.sendAbsenceSuccess(
-              user.userId,
-              makul,
-              materi,
-              kehadiranCheck.timestamp
-            );
-          } else {
-            this.logger.warn('Attendance not verified, may have failed');
-          }
+          return { success: true, verified: false };
+        } else {
+          // No verification link available
+          this.logger.info('No verification link available, assuming success');
+          await this.userManager.incrementStats(user.userId, 'totalAbsences');
+          return { success: true, verified: false };
         }
+      } else {
+        this.logger.error('Attendance request failed');
+        return { success: false, reason: 'request_failed' };
       }
 
     } catch (error) {
@@ -272,6 +322,7 @@ class SchedulerService {
         user.userId,
         `Gagal memproses materi "${materi.title}": ${error.message}`
       );
+      return { success: false, reason: 'error', error: error.message };
     }
   }
 

@@ -499,23 +499,79 @@ class SIMAClient {
       // Find the row with the NIM
       let isPresent = false;
       let timestamp = null;
+      let nama = null;
 
+      //Check multiple table structures
+      // Method 1: Standard table with td elements
       $('table tr').each((i, row) => {
         const $row = $(row);
-        const nimCell = $row.find('td').eq(0).text().trim();
+        const cells = $row.find('td');
         
-        if (nimCell === nim) {
-          isPresent = true;
-          timestamp = $row.find('td').eq(2).text().trim();
-          return false; // break
+        if (cells.length > 0) {
+          // Get all cell texts
+          const cellTexts = [];
+          cells.each((j, cell) => {
+            cellTexts.push($(cell).text().trim());
+          });
+          
+          // Check if any cell contains the NIM
+          const nimIndex = cellTexts.findIndex(text => text.includes(nim));
+          
+          if (nimIndex !== -1) {
+            isPresent = true;
+            nama = cellTexts[nimIndex + 1] || cellTexts[1] || null;
+            
+            // Try to find timestamp in the row
+            // Usually in last column or column after name
+            if (cellTexts.length >= 3) {
+              // Look for datetime pattern (YYYY-MM-DD HH:MM:SS)
+              for (let j = 2; j < cellTexts.length; j++) {
+                if (cellTexts[j].match(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/)) {
+                  timestamp = cellTexts[j];
+                  break;
+                }
+              }
+              // If not found, use last column
+              if (!timestamp) {
+                timestamp = cellTexts[cellTexts.length - 1];
+              }
+            }
+            
+            this.logger.debug(`Found NIM ${nim} in row:`, cellTexts.join(' | '));
+            return false; // break
+          }
         }
       });
 
-      this.logger.info(`Attendance status for ${nim}: ${isPresent ? 'Present' : 'Absent'}`);
+      // Method 2: Check if NIM exists anywhere in the table (fallback)
+      if (!isPresent) {
+        const tableText = $('table').text();
+        if (tableText.includes(nim)) {
+          isPresent = true;
+          this.logger.debug('NIM found in table text but not parsed properly');
+          
+          // Try to extract timestamp from text
+          const timestampMatch = tableText.match(/(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/);
+          if (timestampMatch) {
+            timestamp = timestampMatch[1];
+          }
+        }
+      }
+
+      // Method 3: Log raw HTML for debugging if not found
+      if (!isPresent) {
+        this.logger.debug('Table HTML structure:', $('table').html()?.substring(0, 500));
+      }
+
+      this.logger.info(
+        `Attendance status for ${nim}: ${isPresent ? 'Present ✓' : 'Absent ✗'}` +
+        (timestamp ? ` at ${timestamp}` : '')
+      );
       
       return {
         isPresent,
         timestamp,
+        nama,
       };
 
     } catch (error) {
