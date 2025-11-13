@@ -55,3 +55,6 @@ __pycache__/
 # Tesseract cache
 .tesseract/
 eng.traineddata
+
+# PM2
+ecosystem.config.js
