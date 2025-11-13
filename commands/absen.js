@@ -78,64 +78,9 @@ const command = {
   },
 
   async handleModal(interaction) {
-    // CRITICAL: Check if interaction is still valid before doing anything
-    const now = Date.now();
-    const interactionTime = interaction.createdTimestamp;
-    const timeSinceCreation = now - interactionTime;
-    
-    logger.debug(`Modal interaction age: ${timeSinceCreation}ms`);
-    
-    // If interaction is older than 2.5 seconds, it's too risky to defer
-    if (timeSinceCreation > 2500) {
-      logger.error(`Interaction too old (${timeSinceCreation}ms), cannot process`);
-      
-      // Try to send a DM to user explaining what happened
-      try {
-        const user = await interaction.client.users.fetch(interaction.user.id);
-        await user.send({
-          content: '**Registrasi Timeout**\n\n' +
-            'Proses registrasi memakan waktu terlalu lama dan Discord membatalkan request.\n\n' +
-            '**Solusi:**\n' +
-            '• Coba lagi command `/absen`\n' +
-            '• Pastikan koneksi internet stabil\n' +
-            '• Jika masalah berlanjut, hubungi admin'
-        });
-      } catch (dmError) {
-        logger.error('Failed to send DM:', dmError);
-      }
-      return;
-    }
-
-    // Defer immediately
-    let deferred = false;
-    
     try {
       await interaction.deferReply({ ephemeral: true });
-      deferred = true;
-      logger.debug(`Interaction deferred successfully after ${Date.now() - interactionTime}ms`);
-    } catch (error) {
-      logger.error('Failed to defer reply:', error);
-      
-      // Try to send error via DM as fallback
-      try {
-        const user = await interaction.client.users.fetch(interaction.user.id);
-        await user.send({
-          content: '**Gagal Memproses Registrasi**\n\n' +
-            'Sistem tidak dapat merespons registrasi Anda tepat waktu.\n\n' +
-            '**Silakan coba lagi:**\n' +
-            '1. Ketik `/absen`\n' +
-            '2. Isi form dengan cepat\n' +
-            '3. Submit sesegera mungkin\n\n' +
-            'Jika masalah berlanjut, hubungi admin.'
-        });
-        logger.info('Sent fallback DM to user');
-      } catch (dmError) {
-        logger.error('Failed to send fallback DM:', dmError);
-      }
-      return;
-    }
 
-    try {
       const nim = interaction.fields.getTextInputValue('nim').trim();
       const password = interaction.fields.getTextInputValue('password').trim();
 
@@ -148,71 +93,22 @@ const command = {
 
       logger.info(`Registration attempt for NIM: ${nim}`);
 
-      // Create initial status embed
+      // Create status embed
       const statusEmbed = new EmbedBuilder()
         .setColor(config.colors.info)
         .setTitle('Memproses Registrasi')
         .setDescription('Sedang memverifikasi akun SIMA-mu...')
         .addFields(
-          { name: 'NIM', value: `\`${nim}\``, inline: true },
-          { name: 'Status', value: '🔄 Connecting...', inline: true }
+          { name: 'NIM', value: nim, inline: true },
+          { name: 'Status', value: 'Connecting...', inline: true }
         )
         .setTimestamp();
 
       await interaction.editReply({ embeds: [statusEmbed] });
 
-      // Update status helper
-      const updateStatus = async (description, statusText) => {
-        try {
-          statusEmbed.setDescription(description);
-          statusEmbed.spliceFields(1, 1, { 
-            name: 'Status', 
-            value: statusText, 
-            inline: true 
-          });
-          await interaction.editReply({ embeds: [statusEmbed] });
-        } catch (error) {
-          logger.warn('Failed to update status:', error.message);
-        }
-      };
-
-      // Attempt to login with progress updates
-      await updateStatus(
-        'Mengakses server SIMA...\nMohon tunggu, proses ini memakan waktu 10-30 detik.',
-        '🔄 Initializing...'
-      );
-
+      // Attempt to login
       const simaClient = new SIMAClient();
-      
-      // Start login process
-      const loginPromise = simaClient.login(nim, password);
-      
-      // Create a progress updater
-      let progressInterval;
-      let progressStep = 0;
-      const progressMessages = [
-        'Mendapatkan session...',
-        'Mengambil CAPTCHA...',
-        'Menyelesaikan CAPTCHA...',
-        'Mengirim data login...',
-        'Memverifikasi...'
-      ];
-
-      progressInterval = setInterval(async () => {
-        if (progressStep < progressMessages.length) {
-          await updateStatus(
-            'Login ke SIMA sedang berlangsung...\nMohon tunggu, proses ini memakan waktu.',
-            progressMessages[progressStep]
-          );
-          progressStep++;
-        }
-      }, 5000); // Update every 5 seconds
-
-      // Wait for login to complete
-      const loginResult = await loginPromise;
-      
-      // Clear progress interval
-      clearInterval(progressInterval);
+      const loginResult = await simaClient.login(nim, password);
 
       if (!loginResult.success) {
         logger.error(`Login failed for NIM ${nim}: ${loginResult.error}`);
@@ -233,18 +129,13 @@ const command = {
         return await interaction.editReply({ embeds: [errorEmbed] });
       }
 
-      // Login successful - save user data
-      await updateStatus(
-        'Login berhasil!\nMenyimpan data...',
-        '✅ Authenticated'
-      );
-
+      // Save user data
       const userData = {
         userId: interaction.user.id,
         username: interaction.user.username,
-        studentName: loginResult.studentName || 'Unknown',
+        studentName: loginResult.studentName || 'Unknown', // Student name from SIMA
         nim: nim,
-        password: password,
+        password: password, // Will be encrypted by UserManager
         cookies: loginResult.cookies,
         isActive: true,
         registeredAt: new Date().toISOString(),
@@ -256,22 +147,38 @@ const command = {
       logger.success(`User registered successfully: ${nim} (${userData.studentName})`);
 
       // Fetch initial data
-      await updateStatus(
-        'Data tersimpan!\nMengambil data mata kuliah...',
-        '🔄 Fetching courses...'
-      );
+      statusEmbed
+        .setDescription('Login berhasil!\nMengambil data mata kuliah...')
+        .spliceFields(1, 1, { name: 'Status', value: '✅ Connected', inline: true });
+
+      if (loginResult.studentName) {
+        statusEmbed.addFields({ 
+          name: 'Nama', 
+          value: loginResult.studentName, 
+          inline: false 
+        });
+      }
+
+      await interaction.editReply({ embeds: [statusEmbed] });
 
       const makul = await simaClient.fetchMakul();
       
-      await updateStatus(
-        'Data mata kuliah berhasil diambil!\nFinalisasi...',
-        `Found ${makul.length} courses`
-      );
+      statusEmbed
+        .setDescription(
+          'Login berhasil!\nData mata kuliah berhasil diambil!\nMengambil data materi...'
+        )
+        .addFields({ 
+          name: 'Mata Kuliah', 
+          value: `${makul.length} mata kuliah ditemukan`, 
+          inline: false 
+        });
+
+      await interaction.editReply({ embeds: [statusEmbed] });
 
       // Success embed
       const successEmbed = new EmbedBuilder()
         .setColor(config.colors.success)
-        .setTitle('🎉 Registrasi Berhasil!')
+        .setTitle('Registrasi Berhasil!')
         .setDescription(
           'Akun SIMA-mu telah terdaftar dalam sistem absensi otomatis!\n\n' +
           '**Fitur yang aktif:**\n' +
@@ -283,39 +190,32 @@ const command = {
         )
         .addFields(
           { name: '👤 Nama', value: userData.studentName, inline: false },
-          { name: '🎓 NIM', value: `\`${nim}\``, inline: true },
+          { name: '🎓 NIM', value: nim, inline: true },
           { name: '📚 Mata Kuliah', value: `${makul.length} terdaftar`, inline: true },
-          { name: '📊 Status', value: '🟢 Aktif', inline: true }
+          { name: '📊 Status', value: 'Aktif', inline: true }
         )
         .setFooter({ text: 'Gunakan /status untuk melihat detail lengkap' })
         .setTimestamp();
 
       await interaction.editReply({ embeds: [successEmbed] });
 
-      logger.info(`Registration complete for user ${nim}`);
+      // Trigger immediate check
+      logger.info(`Triggering immediate check for user ${nim}`);
       
     } catch (error) {
       logger.error('Error in modal handler:', error);
 
-      if (!deferred) {
-        return;
-      }
+      const errorEmbed = new EmbedBuilder()
+        .setColor(config.colors.error)
+        .setTitle('Terjadi Kesalahan')
+        .setDescription(
+          'Terjadi kesalahan saat memproses registrasi.\n\n' +
+          `**Error:** \`${error.message}\`\n\n` +
+          'Silakan coba lagi nanti.'
+        )
+        .setTimestamp();
 
-      try {
-        const errorEmbed = new EmbedBuilder()
-          .setColor(config.colors.error)
-          .setTitle('Terjadi Kesalahan')
-          .setDescription(
-            'Terjadi kesalahan saat memproses registrasi.\n\n' +
-            `**Error:** \`${error.message}\`\n\n` +
-            'Silakan coba lagi nanti.'
-          )
-          .setTimestamp();
-
-        await interaction.editReply({ embeds: [errorEmbed] });
-      } catch (replyError) {
-        logger.error('Failed to send error message:', replyError);
-      }
+      await interaction.editReply({ embeds: [errorEmbed] });
     }
   },
 };
