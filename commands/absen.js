@@ -78,16 +78,60 @@ const command = {
   },
 
   async handleModal(interaction) {
-    //Defer reply immediately (within 3 seconds)
+    // CRITICAL: Check if interaction is still valid before doing anything
+    const now = Date.now();
+    const interactionTime = interaction.createdTimestamp;
+    const timeSinceCreation = now - interactionTime;
+    
+    logger.debug(`Modal interaction age: ${timeSinceCreation}ms`);
+    
+    // If interaction is older than 2.5 seconds, it's too risky to defer
+    if (timeSinceCreation > 2500) {
+      logger.error(`Interaction too old (${timeSinceCreation}ms), cannot process`);
+      
+      // Try to send a DM to user explaining what happened
+      try {
+        const user = await interaction.client.users.fetch(interaction.user.id);
+        await user.send({
+          content: '**Registrasi Timeout**\n\n' +
+            'Proses registrasi memakan waktu terlalu lama dan Discord membatalkan request.\n\n' +
+            '**Solusi:**\n' +
+            '• Coba lagi command `/absen`\n' +
+            '• Pastikan koneksi internet stabil\n' +
+            '• Jika masalah berlanjut, hubungi admin'
+        });
+      } catch (dmError) {
+        logger.error('Failed to send DM:', dmError);
+      }
+      return;
+    }
+
+    // Defer immediately
     let deferred = false;
     
     try {
       await interaction.deferReply({ ephemeral: true });
       deferred = true;
-      logger.debug('Interaction deferred successfully');
+      logger.debug(`Interaction deferred successfully after ${Date.now() - interactionTime}ms`);
     } catch (error) {
       logger.error('Failed to defer reply:', error);
-      // If defer fails, the interaction is likely already expired
+      
+      // Try to send error via DM as fallback
+      try {
+        const user = await interaction.client.users.fetch(interaction.user.id);
+        await user.send({
+          content: '**Gagal Memproses Registrasi**\n\n' +
+            'Sistem tidak dapat merespons registrasi Anda tepat waktu.\n\n' +
+            '**Silakan coba lagi:**\n' +
+            '1. Ketik `/absen`\n' +
+            '2. Isi form dengan cepat\n' +
+            '3. Submit sesegera mungkin\n\n' +
+            'Jika masalah berlanjut, hubungi admin.'
+        });
+        logger.info('Sent fallback DM to user');
+      } catch (dmError) {
+        logger.error('Failed to send fallback DM:', dmError);
+      }
       return;
     }
 
@@ -104,7 +148,7 @@ const command = {
 
       logger.info(`Registration attempt for NIM: ${nim}`);
 
-      // Create status embed
+      // Create initial status embed
       const statusEmbed = new EmbedBuilder()
         .setColor(config.colors.info)
         .setTitle('Memproses Registrasi')
@@ -117,7 +161,7 @@ const command = {
 
       await interaction.editReply({ embeds: [statusEmbed] });
 
-      //Update status periodically to show progress
+      // Update status helper
       const updateStatus = async (description, statusText) => {
         try {
           statusEmbed.setDescription(description);
@@ -232,9 +276,9 @@ const command = {
           'Akun SIMA-mu telah terdaftar dalam sistem absensi otomatis!\n\n' +
           '**Fitur yang aktif:**\n' +
           '- Pengecekan materi baru otomatis\n' +
-          '-  Absensi mandiri otomatis\n' +
-          '-  Notifikasi materi baru\n' +
-          '-  Laporan kehadiran\n\n' +
+          '- Absensi mandiri otomatis\n' +
+          '- Notifikasi materi baru\n' +
+          '- Laporan kehadiran\n\n' +
           `**Interval pengecekan:** Setiap \`${config.scheduler.interval}\` menit`
         )
         .addFields(
@@ -254,7 +298,6 @@ const command = {
       logger.error('Error in modal handler:', error);
 
       if (!deferred) {
-        // If we couldn't defer, we can't send any response
         return;
       }
 

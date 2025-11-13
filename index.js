@@ -98,8 +98,23 @@ class AbsenBot {
       this.logger.success('Bot is ready and scheduler started!');
     });
 
-    // Interaction handler
+    // CRITICAL: Interaction handler - must be as fast as possible
     this.client.on(Events.InteractionCreate, async (interaction) => {
+      // Log interaction timing
+      const now = Date.now();
+      const interactionAge = now - interaction.createdTimestamp;
+      
+      // Prioritize modal submissions (they have tight timeout)
+      if (interaction.isModalSubmit()) {
+        this.logger.debug(`Modal submit received (age: ${interactionAge}ms)`);
+        
+        // Handle immediately without try-catch to minimize overhead
+        // Error handling is done inside the handler
+        this.commandHandler.handleInteraction(interaction);
+        return;
+      }
+
+      // Regular command interactions
       try {
         await this.commandHandler.handleInteraction(interaction);
       } catch (error) {
@@ -110,10 +125,14 @@ class AbsenBot {
           ephemeral: true,
         };
 
-        if (interaction.replied || interaction.deferred) {
-          await interaction.followUp(errorMessage);
-        } else {
-          await interaction.reply(errorMessage);
+        try {
+          if (interaction.replied || interaction.deferred) {
+            await interaction.followUp(errorMessage);
+          } else {
+            await interaction.reply(errorMessage);
+          }
+        } catch (replyError) {
+          this.logger.error('Failed to send error reply:', replyError);
         }
       }
     });
