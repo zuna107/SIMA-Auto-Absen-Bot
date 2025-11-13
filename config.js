@@ -24,15 +24,15 @@ const config = {
     captchaUrl: 'https://sima.unsiq.ac.id/gen_cap.php',
     loginCheckUrl: 'https://sima.unsiq.ac.id/cekadm.php?l=https://sima.unsiq.ac.id',
     elearningUrl: 'https://sima.unsiq.ac.id/kuliah/',
-    timeout: 30000, // 30 seconds
+    timeout: 30000,
   },
 
   // Scheduler configuration
   scheduler: {
-    interval: 10, // Check every 10 minutes
-    cronExpression: '*/10 * * * *', // Every 10 minutes
+    interval: 10,
+    cronExpression: '*/10 * * * *',
     maxRetries: 3,
-    retryDelay: 5000, // 5 seconds
+    retryDelay: 5000,
   },
 
   // Request configuration
@@ -46,9 +46,9 @@ const config = {
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     ],
     delays: {
-      min: 1000, // 1 second
-      max: 3000, // 3 seconds
-      betweenRequests: 2000, // 2 seconds
+      min: 1000,
+      max: 3000,
+      betweenRequests: 2000,
     },
   },
 
@@ -57,7 +57,7 @@ const config = {
     encryptionAlgorithm: 'aes-256-gcm',
     encryptionKey: process.env.ENCRYPTION_KEY || 'default-key-change-this-in-production',
     saltRounds: 10,
-    sessionTimeout: 3600000, // 1 hour in milliseconds
+    sessionTimeout: 3600000,
   },
 
   // OCR configuration
@@ -72,7 +72,7 @@ const config = {
     level: process.env.LOG_LEVEL || 'info',
     logPrefix: '[ABSEN BOT]',
     dateFormat: 'YYYY-MM-DD HH:mm:ss',
-    maxLogFiles: 30, // Keep logs for 30 days
+    maxLogFiles: 1,
   },
 
   // Discord embed colors
