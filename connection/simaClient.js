@@ -1,6 +1,8 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import Tesseract from 'tesseract.js';
+import http from 'http';
+import https from 'https';
 import config from '../config.js';
 import Logger from '../utils/logger.js';
 
@@ -12,7 +14,20 @@ class SIMAClient {
     
     this.axiosInstance = axios.create({
       timeout: config.sima.timeout,
-      maxRedirects: 10, //Allow redirects wtf...
+      maxRedirects: config.request.maxRedirects,
+      // HTTP Keep-Alive untuk reuse connections
+      httpAgent: new http.Agent({ 
+        keepAlive: true,
+        keepAliveMsecs: 1000,
+        maxSockets: 50,
+        maxFreeSockets: 10,
+      }),
+      httpsAgent: new https.Agent({ 
+        keepAlive: true,
+        keepAliveMsecs: 1000,
+        maxSockets: 50,
+        maxFreeSockets: 10,
+      }),
       headers: {
         'User-Agent': this.userAgent,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -23,10 +38,9 @@ class SIMAClient {
       },
     });
 
-    //Add axios interceptor to capture cookies from all requests
+    // Add axios interceptor to capture cookies from all requests
     this.axiosInstance.interceptors.response.use(
       (response) => {
-        // Capture cookies from each response
         if (response.headers['set-cookie']) {
           const newCookies = this.parseCookies(response.headers['set-cookie']);
           this.cookies = { ...this.cookies, ...newCookies };
@@ -34,7 +48,6 @@ class SIMAClient {
         return response;
       },
       (error) => {
-        // Also capture cookies from error responses
         if (error.response && error.response.headers['set-cookie']) {
           const newCookies = this.parseCookies(error.response.headers['set-cookie']);
           this.cookies = { ...this.cookies, ...newCookies };
@@ -90,12 +103,12 @@ class SIMAClient {
         imageBuffer,
         'eng',
         {
-          logger: () => {}, // Suppress tesseract logs ofc
+          logger: () => {}, // Suppress tesseract logs
         }
       );
 
       let cleanText = text.trim()
-        .replace(/Ã—/g, 'x')
+        .replace(/×/g, 'x')
         .replace(/X/g, 'x')
         .replace(/\s+/g, '');
 
@@ -105,12 +118,14 @@ class SIMAClient {
       const match = cleanText.match(/(\d+)\s*([+\-xX*])\s*(\d+)/);
 
       if (!match) {
-        if (cleanText.length === 2 && /\d/.test(cleanText[0]) && /\d/.test(cleanText[1])) {
-          // Assume multiplication for two consecutive digits
+        // Fallback for single digit operations
+        if (cleanText.length === 3 && 
+            /\d/.test(cleanText[0]) && 
+            /\d/.test(cleanText[2])) {
           const a = parseInt(cleanText[0]);
-          const b = parseInt(cleanText[1]);
-          this.logger.debug(`Fallback: Assuming ${a} x ${b}`);
-          return a * b;
+          const op = cleanText[1];
+          const b = parseInt(cleanText[2]);
+          return this.calculateCaptcha(a, op, b);
         }
         throw new Error(`Failed to parse CAPTCHA: ${cleanText}`);
       }
@@ -164,7 +179,6 @@ class SIMAClient {
       const profileText = $('body').text();
       const nimIndex = profileText.indexOf(nim);
       if (nimIndex !== -1) {
-        // Get text after NIM (usually the name follows)
         const afterNim = profileText.substring(nimIndex + nim.length, nimIndex + nim.length + 100);
         const lines = afterNim.split('\n').map(l => l.trim()).filter(l => l.length > 0);
         if (lines.length > 0 && lines[0].length > 3) {
@@ -201,16 +215,16 @@ class SIMAClient {
     }
   }
 
-  async login(nim, password, retries = 3) {
+  async login(nim, password, retries = 3, timeoutMs = 25000) {
     for (let attempt = 1; attempt <= retries; attempt++) {
+      let startTime = Date.now();
+      
       try {
         this.logger.info(`Login attempt ${attempt}/${retries} for NIM: ${nim}`);
-
-        //Reset cookies at the start of each attempt
         this.cookies = {};
 
         // Step 1: Get initial session with proper URL parameter
-        await this.delay();
+        await this.delay(1000);
         const initResponse = await this.axiosInstance.get(config.sima.loginUrl);
         
         this.logger.debug('Session cookies obtained:', Object.keys(this.cookies).join(', '));
@@ -230,14 +244,14 @@ class SIMAClient {
         this.logger.success(`CAPTCHA solved: ${captchaAnswer}`);
 
         // Step 4: Submit login with proper URL
-        await this.delay();
+        await this.delay(1000);
         const loginPayload = new URLSearchParams({
           txUser: nim,
           txPass: password,
           kdc: captchaAnswer.toString(),
         });
 
-        //Use the full URL with parameter
+        // Use the full URL with parameter
         const loginUrl = `${config.sima.baseUrl}/cekadm.php?l=${config.sima.baseUrl}`;
         
         const loginResponse = await this.axiosInstance.post(
@@ -249,7 +263,6 @@ class SIMAClient {
               'Content-Type': 'application/x-www-form-urlencoded',
               'Referer': config.sima.loginUrl,
             },
-            //Allow redirects to follow through to dashboard
             maxRedirects: 10,
             validateStatus: (status) => status < 400,
           }
@@ -272,12 +285,11 @@ class SIMAClient {
           throw new Error('NIM atau password salah');
         }
 
-        //Better login verification
+        // Better login verification
         const finalUrl = loginResponse.request.res.responseUrl || loginUrl;
         const pageTitle = $('title').text().toLowerCase();
         const bodyText = $('body').text().toLowerCase();
         
-        // Check multiple indicators of successful login
         const isLoggedIn = 
           finalUrl.includes('index.php') ||
           finalUrl.includes('/kuliah/') ||
@@ -288,10 +300,10 @@ class SIMAClient {
           $('.user-panel').length > 0;
 
         if (isLoggedIn) {
-          this.logger.success(`Login successful for NIM: ${nim}`);
-          this.logger.debug('Final cookies:', Object.keys(this.cookies).join(', '));
+          const elapsedTime = Date.now() - startTime;
+          this.logger.success(`Login successful for NIM: ${nim} (${elapsedTime}ms)`);
           
-          //Extract student name from profile section
+          // Extract student name
           const studentName = this.extractStudentName($, nim);
           
           return {
@@ -299,10 +311,10 @@ class SIMAClient {
             cookies: this.cookies,
             message: 'Login berhasil',
             studentName: studentName,
+            elapsedTime,
           };
         }
 
-        //Log more details for debugging
         this.logger.debug('Page title:', pageTitle);
         this.logger.debug('Has logout link:', $('a[href*="logout"]').length > 0);
         this.logger.debug('Response length:', loginResponse.data.length);
@@ -310,7 +322,19 @@ class SIMAClient {
         throw new Error('Login verification failed - tidak ditemukan indikator login sukses');
 
       } catch (error) {
-        this.logger.warn(`Login attempt ${attempt} failed:`, error.message);
+        const elapsedTime = Date.now() - startTime;
+        this.logger.warn(
+          `Login attempt ${attempt} failed (${elapsedTime}ms):`, 
+          error.message
+        );
+        
+        // Check if timeout exceeded
+        if (elapsedTime >= timeoutMs) {
+          return {
+            success: false,
+            error: 'Login timeout - server took too long to respond',
+          };
+        }
         
         if (attempt === retries) {
           return {
@@ -319,7 +343,7 @@ class SIMAClient {
           };
         }
 
-        await this.delay(config.scheduler.retryDelay);
+        await this.delay(2000);
       }
     }
 
@@ -373,6 +397,7 @@ class SIMAClient {
             diskusi: diskusiLink ? `${config.sima.elearningUrl}${diskusiLink}` : null,
           },
           materiId: materiLink ? materiLink.replace('?m=', '') : null,
+          tugasId: tugasLink ? tugasLink.replace('?t=', '') : null,
         };
 
         makulList.push(makul);
@@ -424,6 +449,28 @@ class SIMAClient {
           .text()
           .trim();
 
+        // Extract berkas/files
+        const berkasLinks = [];
+        $element.find('.form-group').each((_, group) => {
+          const $group = $(group);
+          const label = $group.find('label').text().trim();
+          
+          if (label.includes('Berkas')) {
+            $group.find('a[href*="materi_view.php"]').each((_, link) => {
+              const $link = $(link);
+              const href = $link.attr('href');
+              const filename = $link.text().trim();
+              
+              if (href && filename) {
+                berkasLinks.push({
+                  filename,
+                  url: `${config.sima.baseUrl}/kuliah/${href}`,
+                });
+              }
+            });
+          }
+        });
+
         const diskusiLink = $element.find('a[href*="?dm="]').attr('href');
         const kehadiranLink = $element.find('a[href*="materi_hadir.php"]').attr('href');
 
@@ -438,6 +485,7 @@ class SIMAClient {
           waktuDiskusi,
           isManual,
           isActive,
+          berkas: berkasLinks,
           links: {
             diskusi: diskusiLink ? `${config.sima.elearningUrl}${diskusiLink}` : null,
             kehadiran: kehadiranLink ? `${config.sima.baseUrl}/kuliah/${kehadiranLink}` : null,
@@ -457,6 +505,90 @@ class SIMAClient {
     }
   }
 
+  async fetchTugas(tugasId) {
+    try {
+      this.logger.info(`Fetching tugas for ID: ${tugasId}`);
+      
+      await this.delay();
+      const url = `${config.sima.elearningUrl}?t=${tugasId}`;
+      const response = await this.axiosInstance.get(url, {
+        headers: { Cookie: this.getCookieString() },
+      });
+
+      const $ = cheerio.load(response.data);
+      const tugasList = [];
+
+      $('.room-box').each((i, element) => {
+        const $element = $(element);
+        const title = $element.find('h4.text-primary b').text().trim();
+        
+        if (!title) return;
+
+        // Extract soal/perintah
+        const soal = $element.find('.form-group')
+          .filter((_, el) => $(el).find('label').text().includes('Soal/Perintah'))
+          .find('.controls')
+          .text()
+          .trim();
+
+        // Extract waktu
+        const waktu = $element.find('.form-group')
+          .filter((_, el) => $(el).find('label').text().includes('Waktu'))
+          .find('.controls')
+          .text()
+          .trim();
+
+        // Check if already submitted
+        const hasJawaban = $element.find('a[href*="materi_view.php?j=tj"]').length > 0;
+        const hasFormJawabUlang = $element.find('button').text().includes('Form Jawab Ulang');
+        const isSubmitted = hasJawaban || hasFormJawabUlang;
+
+        // Extract nilai if available
+        let nilai = null;
+        $element.find('.form-group').each((_, group) => {
+          const $group = $(group);
+          const label = $group.find('label').text().trim();
+          
+          if (label.includes('Nilai')) {
+            const nilaiText = $group.find('.controls p').text().trim();
+            if (nilaiText && !isNaN(nilaiText)) {
+              nilai = parseInt(nilaiText);
+            }
+          }
+        });
+
+        // Extract tugas ID from hidden input
+        const tugasIdInput = $element.find('input[name="txTugasID"]').attr('value');
+
+        const isActive = waktu.toLowerCase().includes('aktif') || 
+                        !waktu.toLowerCase().includes('selesai');
+
+        const tugas = {
+          id: tugasIdInput || null,
+          title,
+          soal,
+          waktu,
+          isActive,
+          isSubmitted,
+          nilai,
+          timestamp: new Date().toISOString(),
+        };
+
+        tugasList.push(tugas);
+      });
+
+      this.logger.success(
+        `Found ${tugasList.length} tugas ` +
+        `(${tugasList.filter(t => !t.isSubmitted && t.isActive).length} pending)`
+      );
+      return tugasList;
+
+    } catch (error) {
+      this.logger.error('Failed to fetch tugas:', error);
+      throw error;
+    }
+  }
+
   async absenMateri(diskusiUrl) {
     try {
       this.logger.info(`Attending materi: ${diskusiUrl}`);
@@ -466,7 +598,6 @@ class SIMAClient {
         headers: { Cookie: this.getCookieString() },
       });
 
-      // Just accessing the discussion page should register attendance
       const $ = cheerio.load(response.data);
       const pageTitle = $('h4.text-primary b').text().trim();
 
@@ -495,32 +626,27 @@ class SIMAClient {
 
       const $ = cheerio.load(response.data);
       
-      // Find the row with the NIM
       let isPresent = false;
       let timestamp = null;
       let nama = null;
 
-      //Check multiple table structures
       // Method 1: Standard table with td elements
       $('table tr').each((i, row) => {
         const $row = $(row);
         const cells = $row.find('td');
         
         if (cells.length > 0) {
-          // Get all cell texts
           const cellTexts = [];
           cells.each((j, cell) => {
             cellTexts.push($(cell).text().trim());
           });
           
-          // Check if any cell contains the NIM
           const nimIndex = cellTexts.findIndex(text => text.includes(nim));
           
           if (nimIndex !== -1) {
             isPresent = true;
             nama = cellTexts[nimIndex + 1] || cellTexts[1] || null;
             
-            // Try to find timestamp in the row
             if (cellTexts.length >= 3) {
               for (let j = 2; j < cellTexts.length; j++) {
                 if (cellTexts[j].match(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/)) {
@@ -528,7 +654,6 @@ class SIMAClient {
                   break;
                 }
               }
-              // If not found, use last column
               if (!timestamp) {
                 timestamp = cellTexts[cellTexts.length - 1];
               }
@@ -540,14 +665,13 @@ class SIMAClient {
         }
       });
 
-      // Method 2: Check if NIM exists anywhere in the table (fallback)
+      // Method 2: Fallback
       if (!isPresent) {
         const tableText = $('table').text();
         if (tableText.includes(nim)) {
           isPresent = true;
           this.logger.debug('NIM found in table text but not parsed properly');
           
-          // Try to extract timestamp from text
           const timestampMatch = tableText.match(/(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/);
           if (timestampMatch) {
             timestamp = timestampMatch[1];
@@ -555,7 +679,6 @@ class SIMAClient {
         }
       }
 
-      // Method 3: Log raw HTML for debugging if not found
       if (!isPresent) {
         this.logger.debug('Table HTML structure:', $('table').html()?.substring(0, 500));
       }
