@@ -10,11 +10,9 @@ import SchedulerService from './services/scheduler.js';
 import Logger from './utils/logger.js';
 import configData from './config.js';
 
-// ES Module __dirname workaround
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables
 config();
 
 class AbsenBot {

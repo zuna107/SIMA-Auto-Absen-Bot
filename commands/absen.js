@@ -133,9 +133,9 @@ const command = {
       const userData = {
         userId: interaction.user.id,
         username: interaction.user.username,
-        studentName: loginResult.studentName || 'Unknown', // Student name from SIMA
+        studentName: loginResult.studentName || 'Unknown',
         nim: nim,
-        password: password, // Will be encrypted by UserManager
+        password: password,
         cookies: loginResult.cookies,
         isActive: true,
         registeredAt: new Date().toISOString(),
@@ -175,7 +175,6 @@ const command = {
 
       await interaction.editReply({ embeds: [statusEmbed] });
 
-      // Success embed
       const successEmbed = new EmbedBuilder()
         .setColor(config.colors.success)
         .setTitle('Registrasi Berhasil!')

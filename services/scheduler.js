@@ -20,11 +20,7 @@ class SchedulerService {
   async start() {
     try {
       this.logger.info(`Starting scheduler with ${config.scheduler.interval} minute interval`);
-
-      // Run immediately on start
       await this.checkAllUsers();
-
-      // Schedule periodic checks
       this.task = cron.schedule(config.scheduler.cronExpression, async () => {
         if (this.isRunning) {
           this.logger.warn('Previous check still running, skipping...');
@@ -84,20 +80,17 @@ class SchedulerService {
     try {
       this.logger.info(`Checking materials for ${user.nim} (${user.studentName || 'Unknown'})...`);
 
-      // Update last check time
       await this.userManager.updateUser(user.userId, {
         lastCheck: new Date().toISOString(),
       });
 
-      // Increment check counter
       await this.userManager.incrementStats(user.userId, 'totalChecks');
 
-      // Create SIMA client with user's cookies
       const simaClient = new SIMAClient(
         user.cookies ? JSON.parse(user.cookies) : null
       );
 
-      // Try to fetch makul, re-login if session expired
+      // Tryna to fetch makul, re-login if session expired
       let makul;
       try {
         makul = await simaClient.fetchMakul();
@@ -119,7 +112,6 @@ class SchedulerService {
 
       this.logger.info(`Found ${makul.length} mata kuliah for ${user.nim}`);
 
-      // Load last known materials
       const lastMateriData = await this.loadLastMateri();
       const userLastMateri = lastMateriData[user.userId] || {};
 
@@ -143,7 +135,6 @@ class SchedulerService {
             );
             newMateriFound += newMateri.length;
 
-            // Process each new materi
             for (const materi of newMateri) {
               const absenceResult = await this.processNewMateri(
                 user,
@@ -175,7 +166,6 @@ class SchedulerService {
         }
       }
 
-      // Save updated last materi
       lastMateriData[user.userId] = userLastMateri;
       await this.saveLastMateri(lastMateriData);
 

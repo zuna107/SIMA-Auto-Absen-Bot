@@ -12,7 +12,7 @@ class SIMAClient {
     
     this.axiosInstance = axios.create({
       timeout: config.sima.timeout,
-      maxRedirects: 10, //Allow redirects
+      maxRedirects: 10, //Allow redirects wtf...
       headers: {
         'User-Agent': this.userAgent,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -90,7 +90,7 @@ class SIMAClient {
         imageBuffer,
         'eng',
         {
-          logger: () => {}, // Suppress tesseract logs
+          logger: () => {}, // Suppress tesseract logs ofc
         }
       );
 
@@ -149,7 +149,6 @@ class SIMAClient {
         const divContent = logoNormal.find('div font');
         if (divContent.length > 0) {
           const text = divContent.text().trim();
-          // Split by NIM and get the name part
           const parts = text.split(nim);
           if (parts.length > 1) {
             const name = parts[1].trim();
@@ -186,7 +185,7 @@ class SIMAClient {
             if (potentialName.length > 3 && potentialName.length < 50) {
               this.logger.info('Student name extracted (method 3):', potentialName);
               foundName = potentialName;
-              return false; // break
+              return false;
             }
           }
         }
@@ -216,7 +215,7 @@ class SIMAClient {
         
         this.logger.debug('Session cookies obtained:', Object.keys(this.cookies).join(', '));
 
-        // Step 2: Get CAPTCHA image
+        // Step 2: Get FCKING CAPTCHA image
         await this.delay();
         const captchaResponse = await this.axiosInstance.get(
           config.sima.captchaUrl,
@@ -226,7 +225,7 @@ class SIMAClient {
           }
         );
 
-        // Step 3: Solve CAPTCHA
+        // Step 3: Solve FCKING CAPTCHA BRO
         const captchaAnswer = await this.solveCaptcha(captchaResponse.data);
         this.logger.success(`CAPTCHA solved: ${captchaAnswer}`);
 
@@ -522,9 +521,7 @@ class SIMAClient {
             nama = cellTexts[nimIndex + 1] || cellTexts[1] || null;
             
             // Try to find timestamp in the row
-            // Usually in last column or column after name
             if (cellTexts.length >= 3) {
-              // Look for datetime pattern (YYYY-MM-DD HH:MM:SS)
               for (let j = 2; j < cellTexts.length; j++) {
                 if (cellTexts[j].match(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/)) {
                   timestamp = cellTexts[j];
@@ -538,7 +535,7 @@ class SIMAClient {
             }
             
             this.logger.debug(`Found NIM ${nim} in row:`, cellTexts.join(' | '));
-            return false; // break
+            return false;
           }
         }
       });
