@@ -1,10 +1,12 @@
-import { 
-  SlashCommandBuilder, 
-  EmbedBuilder, 
-  StringSelectMenuBuilder, 
-  ActionRowBuilder 
+import {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  ActionRowBuilder,
 } from 'discord.js';
 import UserManager from '../connection/userManager.js';
+import SIMAClient from '../connection/simaClient.js';
 import Logger from '../utils/logger.js';
 import config from '../config.js';
 import fs from 'fs/promises';
@@ -31,24 +33,43 @@ const command = {
           .setTitle('Akun Belum Terdaftar')
           .setDescription(
             'Kamu belum mendaftarkan akun SIMA.\n\n' +
-            'Gunakan `/absen` untuk mendaftar terlebih dahulu.'
+            'Gunakan /absen untuk mendaftar terlebih dahulu.'
           )
           .setTimestamp();
 
         return await interaction.editReply({ embeds: [embed] });
       }
 
-      // Load materi cache
-      const materiCache = await loadMateriCache();
-      const userMateri = materiCache[user.userId];
+      // Load last materi data from user-specific file
+      const lastMateriDir = config.paths.lastMateri;
+      const userMateriPath = `${lastMateriDir}/${user.userId}.json`;
+      
+      let userLastMateri = {};
+      try {
+        const data = await fs.readFile(userMateriPath, 'utf-8');
+        userLastMateri = JSON.parse(data);
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          throw error;
+        }
+        // File doesn't exist yet, use empty object
+      }
 
-      if (!userMateri || Object.keys(userMateri).length === 0) {
+      // Get makul list
+      const simaClient = new SIMAClient(
+        user.cookies ? JSON.parse(user.cookies) : null
+      );
+
+      let makul;
+      try {
+        makul = await simaClient.fetchMakul();
+      } catch (error) {
         const embed = new EmbedBuilder()
-          .setColor(config.colors.warning)
-          .setTitle('Belum Ada Data Materi')
+          .setColor(config.colors.error)
+          .setTitle('Gagal Mengambil Data')
           .setDescription(
-            'Data materi belum tersedia. Sistem akan mengumpulkan data pada pengecekan berikutnya.\n\n' +
-            `**Waktu pengecekan:** Setiap ${config.scheduler.interval} menit\n` +
+            'Gagal mengambil data mata kuliah dari SIMA.\n\n' +
+            `Error: ${error.message}\n\n` +
             'Silakan coba lagi nanti.'
           )
           .setTimestamp();
@@ -56,18 +77,32 @@ const command = {
         return await interaction.editReply({ embeds: [embed] });
       }
 
-      // Create dropdown menu for makul selection
-      const makulOptions = Object.entries(userMateri).map(([materiId, data]) => ({
-        label: data.makulNama.substring(0, 100),
-        description: `${data.materiList.length} materi tersedia`,
-        value: materiId,
-      }));
-
-      if (makulOptions.length === 0) {
+      if (makul.length === 0) {
         const embed = new EmbedBuilder()
           .setColor(config.colors.warning)
           .setTitle('Tidak Ada Mata Kuliah')
-          .setDescription('Tidak ditemukan mata kuliah yang tersedia.')
+          .setDescription('Tidak ditemukan mata kuliah yang terdaftar.')
+          .setTimestamp();
+
+        return await interaction.editReply({ embeds: [embed] });
+      }
+
+      // Create selector menu
+      const options = makul
+        .filter(mk => mk.materiId)
+        .slice(0, 25) // Discord limit
+        .map(mk => 
+          new StringSelectMenuOptionBuilder()
+            .setLabel(mk.nama.substring(0, 100))
+            .setDescription(`${mk.kode} - ${mk.dosen.split('|')[0].substring(0, 50)}`)
+            .setValue(mk.materiId)
+        );
+
+      if (options.length === 0) {
+        const embed = new EmbedBuilder()
+          .setColor(config.colors.warning)
+          .setTitle('Tidak Ada Materi')
+          .setDescription('Tidak ada mata kuliah dengan materi yang tersedia.')
           .setTimestamp();
 
         return await interaction.editReply({ embeds: [embed] });
@@ -76,42 +111,120 @@ const command = {
       const selectMenu = new StringSelectMenuBuilder()
         .setCustomId(`materi_select_${interaction.user.id}`)
         .setPlaceholder('Pilih Mata Kuliah')
-        .addOptions(makulOptions.slice(0, 25)); // Discord limit: 25 options
+        .addOptions(options);
 
       const row = new ActionRowBuilder().addComponents(selectMenu);
 
       const embed = new EmbedBuilder()
-        .setColor(config.colors.primary)
-        .setTitle('Daftar Materi & Berkas')
+        .setColor(config.colors.info)
+        .setTitle('Daftar Mata Kuliah')
         .setDescription(
-          `Pilih mata kuliah untuk melihat daftar materi dan berkas yang tersedia.\n\n` +
-          `**Total Mata Kuliah:** ${makulOptions.length}`
+          'Pilih mata kuliah dari menu di bawah untuk melihat daftar materi dan berkas.'
         )
+        .addFields({
+          name: 'Total Mata Kuliah',
+          value: `${makul.length} mata kuliah`,
+          inline: true,
+        })
         .setTimestamp();
 
-      await interaction.editReply({ 
-        embeds: [embed], 
-        components: [row] 
+      await interaction.editReply({
+        embeds: [embed],
+        components: [row],
       });
 
-      logger.info(`Materi menu displayed for ${user.nim}`);
+      logger.info(`Materi selector sent to ${user.nim}`);
+
     } catch (error) {
       logger.error('Error in materi command:', error);
       throw error;
     }
   },
-};
 
-async function loadMateriCache() {
-  try {
-    const data = await fs.readFile(config.paths.materi, 'utf-8');
-    return JSON.parse(data);
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      return {};
+  async handleSelectMenu(interaction) {
+    try {
+      await interaction.deferUpdate();
+
+      const materiId = interaction.values[0];
+      const user = await userManager.getUser(interaction.user.id);
+
+      if (!user) return;
+
+      // Load materi data
+      const lastMateriPath = config.paths.lastMateri;
+      const data = await fs.readFile(lastMateriPath, 'utf-8');
+      const lastMateriData = JSON.parse(data);
+      const userLastMateri = lastMateriData[user.userId] || {};
+
+      const materiList = userLastMateri[materiId] || [];
+
+      if (materiList.length === 0) {
+        const embed = new EmbedBuilder()
+          .setColor(config.colors.warning)
+          .setTitle('Tidak Ada Materi')
+          .setDescription('Belum ada materi yang tercatat untuk mata kuliah ini.')
+          .setTimestamp();
+
+        return await interaction.editReply({
+          embeds: [embed],
+          components: [],
+        });
+      }
+
+      // Create embed dengan daftar materi
+      const fields = [];
+
+      materiList.forEach((materi, index) => {
+        let materiText = materi.title;
+
+        if (materi.berkas && materi.berkas.length > 0) {
+          const berkasText = materi.berkas
+            .map(b => `- ${b.name}`)
+            .join('\n');
+          
+          materiText += `\n\nBerkas:\n${berkasText}`;
+        } else {
+          materiText += '\n\nBerkas: Tidak ada';
+        }
+
+        fields.push({
+          name: `Materi ${index + 1}`,
+          value: materiText,
+          inline: false,
+        });
+      });
+
+      // Split into multiple embeds if too many fields
+      const maxFieldsPerEmbed = 5;
+      const embeds = [];
+
+      for (let i = 0; i < fields.length; i += maxFieldsPerEmbed) {
+        const embedFields = fields.slice(i, i + maxFieldsPerEmbed);
+        
+        const embed = new EmbedBuilder()
+          .setColor(config.colors.info)
+          .setTitle(
+            i === 0 
+              ? `Daftar Materi (${materiList.length} materi)` 
+              : `Daftar Materi (lanjutan)`
+          )
+          .addFields(embedFields)
+          .setTimestamp();
+
+        embeds.push(embed);
+      }
+
+      await interaction.editReply({
+        embeds: embeds,
+        components: [],
+      });
+
+      logger.info(`Displayed ${materiList.length} materi for user ${user.nim}`);
+
+    } catch (error) {
+      logger.error('Error handling materi select:', error);
     }
-    throw error;
-  }
-}
+  },
+};
 
 export default command;

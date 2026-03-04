@@ -11,7 +11,7 @@ const config = {
   // File paths
   paths: {
     users: './public/user.json',
-    lastMateri: './public/lastMateri.json',
+    lastMateri: './public/lastMateri', // Directory instead of file
     makul: './public/global/makul.json',
     materi: './public/global/materi.json',
     logs: './public/logs',
