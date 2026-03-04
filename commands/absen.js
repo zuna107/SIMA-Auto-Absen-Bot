@@ -200,6 +200,12 @@ const command = {
 
       // Trigger immediate check
       logger.info(`Triggering immediate check for user ${nim}`);
+      const schedulerService = interaction.client.schedulerService;
+      if (schedulerService?.checkUserById) {
+        schedulerService.checkUserById(interaction.user.id).catch((error) => {
+          logger.warn(`Immediate check failed for ${nim}: ${error.message}`);
+        });
+      }
       
     } catch (error) {
       logger.error('Error in modal handler:', error);

@@ -11,7 +11,8 @@ const config = {
   // File paths
   paths: {
     users: './public/user.json',
-    lastMateri: './public/lastMateri', // Directory instead of file
+    lastMateri: './public/lastMateri',
+    lastMateriLegacy: './public/lastMateri.json',
     makul: './public/global/makul.json',
     materi: './public/global/materi.json',
     logs: './public/logs',
@@ -31,6 +32,7 @@ const config = {
   scheduler: {
     interval: 10,
     cronExpression: '*/10 * * * *',
+    maxConcurrentUsers: 3,
     maxRetries: 3,
     retryDelay: 5000,
   },
@@ -77,11 +79,11 @@ const config = {
 
   // Discord embed colors
   colors: {
-    success: null,
+    success: 0x22c55e,
     error: 0xff0000,
-    warning: null,
-    info: null,
-    primary: null,
+    warning: 0xf59e0b,
+    info: 0x3b82f6,
+    primary: 0x6366f1,
   },
 
   // Development mode

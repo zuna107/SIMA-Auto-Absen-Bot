@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import fs from 'fs/promises';
+import path from 'path';
 import config from '../config.js';
 import Logger from '../utils/logger.js';
 import UserManager from '../connection/userManager.js';
@@ -13,26 +14,28 @@ class SchedulerService {
     this.userManager = new UserManager();
     this.notifier = new NotificationService(client);
     this.task = null;
-    this.reminderTask = null;
     this.isRunning = false;
     this.lastMateriDir = config.paths.lastMateri;
-    this.maxConcurrentUsers = 3; // Process max 3 users simultaneously
+    this.legacyMateriPath = config.paths.lastMateriLegacy;
+    this.maxConcurrentUsers = Math.max(1, Number(config.scheduler.maxConcurrentUsers || 3));
   }
 
   async start() {
     try {
       this.logger.info(`Starting scheduler with ${config.scheduler.interval} minute interval`);
 
-      // Run immediately on start
+      await this.ensureMateriDirectory();
+      await this.migrateLegacyLastMateri();
+
+      // Run once on startup.
       await this.checkAllUsers();
 
-      // Schedule periodic checks
       this.task = cron.schedule(config.scheduler.cronExpression, async () => {
         if (this.isRunning) {
-          this.logger.warn('Previous check still running, skipping...');
+          this.logger.warn('Previous check still running, skipping this tick');
           return;
         }
-        
+
         await this.checkAllUsers();
       });
 
@@ -46,45 +49,49 @@ class SchedulerService {
   async stop() {
     if (this.task) {
       this.task.stop();
-      this.logger.info('Scheduler stopped');
+      this.task = null;
     }
+
+    this.logger.info('Scheduler stopped');
   }
 
   async checkAllUsers() {
     this.isRunning = true;
-    this.logger.info('Starting check cycle for all users...');
+    const startedAt = Date.now();
+    this.logger.info('Starting check cycle for all active users');
 
     try {
       const users = await this.userManager.getActiveUsers();
-      
+
       if (users.length === 0) {
-        this.logger.info('No active users to check');
+        this.logger.info('No active users found');
         return;
       }
 
       this.logger.info(`Checking ${users.length} active user(s)`);
 
-      // Process users in batches (parallel processing)
       for (let i = 0; i < users.length; i += this.maxConcurrentUsers) {
         const batch = users.slice(i, i + this.maxConcurrentUsers);
-        
+        const batchNumber = Math.floor(i / this.maxConcurrentUsers) + 1;
+
         this.logger.info(
-          `Processing batch ${Math.floor(i / this.maxConcurrentUsers) + 1}: ` +
-          `${batch.map(u => u.nim).join(', ')}`
+          `Processing batch ${batchNumber} (${batch.length} user): ${batch.map((user) => user.nim).join(', ')}`
         );
 
-        // Process batch in parallel
-        await Promise.allSettled(
-          batch.map(user => this.checkUserMateri(user))
-        );
+        const results = await Promise.allSettled(batch.map((user) => this.checkUserMateri(user)));
+        const failed = results.filter((result) => result.status === 'rejected').length;
 
-        // Delay between batches
+        if (failed > 0) {
+          this.logger.warn(`Batch ${batchNumber} completed with ${failed} failure(s)`);
+        }
+
         if (i + this.maxConcurrentUsers < users.length) {
           await this.delay(config.request.delays.betweenRequests);
         }
       }
 
-      this.logger.success('Check cycle completed');
+      const elapsedMs = Date.now() - startedAt;
+      this.logger.success(`Check cycle completed in ${elapsedMs}ms`);
     } catch (error) {
       this.logger.error('Check cycle failed:', error);
     } finally {
@@ -92,154 +99,115 @@ class SchedulerService {
     }
   }
 
+  async checkUserById(userId) {
+    try {
+      const user = await this.userManager.getUser(userId);
+      if (!user || !user.isActive) {
+        return false;
+      }
+
+      await this.checkUserMateri(user);
+      return true;
+    } catch (error) {
+      this.logger.error(`Manual user check failed for ${userId}:`, error);
+      return false;
+    }
+  }
+
   async checkUserMateri(user) {
     try {
-      this.logger.info(`Checking materials for ${user.nim} (${user.studentName || 'Unknown'})...`);
+      this.logger.info(`Checking materials for ${user.nim} (${user.studentName || 'Unknown'})`);
 
       await this.userManager.updateUser(user.userId, {
         lastCheck: new Date().toISOString(),
       });
-
       await this.userManager.incrementStats(user.userId, 'totalChecks');
 
-      // Create SIMA client with fresh cookies
-      let simaClient = new SIMAClient(
-        user.cookies ? JSON.parse(user.cookies) : null
-      );
+      let simaClient = new SIMAClient(this.parseCookies(user.cookies));
+      let makul = [];
 
-      // Always try to fetch, and re-login if needed
-      let makul;
-      let loginAttempted = false;
-      
       try {
         makul = await simaClient.fetchMakul();
       } catch (error) {
-        this.logger.warn(`Session likely expired for ${user.nim} (${error.message}), re-logging in...`);
-        loginAttempted = true;
-        
+        this.logger.warn(`Session seems invalid for ${user.nim}: ${error.message}`);
+        await this.notifier.sendLoginExpired(user.userId);
+
         const loginResult = await simaClient.login(user.nim, user.password);
-        
         if (!loginResult.success) {
           throw new Error(`Re-login failed: ${loginResult.error}`);
         }
 
-        // Update cookies and create new client
-        await this.userManager.updateCookies(user.userId, loginResult.cookies);
+        await this.userManager.updateUser(user.userId, {
+          cookies: loginResult.cookies,
+          lastLogin: new Date().toISOString(),
+          studentName: loginResult.studentName || user.studentName,
+        });
+
         simaClient = new SIMAClient(loginResult.cookies);
-        
-        // Retry fetch with new session
         makul = await simaClient.fetchMakul();
       }
 
       this.logger.info(`Found ${makul.length} mata kuliah for ${user.nim}`);
 
-      // Load user-specific materi data
       const userLastMateri = await this.loadUserMateri(user.userId);
-
       let newMateriFound = 0;
       let absencesCompleted = 0;
 
-      // Check each mata kuliah
       for (const mk of makul) {
-        if (!mk.materiId) continue;
+        if (!mk.materiId) {
+          continue;
+        }
 
         try {
           const materiList = await simaClient.fetchMateri(mk.materiId);
           const lastKnownMateri = userLastMateri[mk.materiId] || [];
-
-          // Find new materials
           const newMateri = this.findNewMateri(materiList, lastKnownMateri);
 
           if (newMateri.length > 0) {
-            this.logger.info(
-              `Found ${newMateri.length} new materi in ${mk.nama}`
-            );
+            this.logger.info(`Found ${newMateri.length} new materi in ${mk.nama}`);
             newMateriFound += newMateri.length;
 
             for (const materi of newMateri) {
-              const absenceResult = await this.processNewMateri(
-                user,
-                mk,
-                materi,
-                simaClient
-              );
-
-              if (absenceResult && absenceResult.success && absenceResult.verified) {
-                absencesCompleted++;
+              const absenceResult = await this.processNewMateri(user, mk, materi, simaClient);
+              if (absenceResult.success && absenceResult.verified) {
+                absencesCompleted += 1;
               }
             }
           }
 
-          // Fetch tugas if available
+          userLastMateri[mk.materiId] = this.normalizeMateriForCache(materiList);
+
           if (mk.tugasId) {
-            try {
-              const tugasList = await simaClient.fetchTugas(mk.tugasId);
-              const lastKnownTugas = userLastMateri[`tugas_${mk.materiId}`] || [];
+            const tugasList = await simaClient.fetchTugas(mk.tugasId);
+            const tugasCacheKey = `tugas_${mk.materiId}`;
+            const lastKnownTugas = userLastMateri[tugasCacheKey] || [];
+            const newTugas = this.findNewTugas(tugasList, lastKnownTugas);
 
-              const newTugas = this.findNewTugas(tugasList, lastKnownTugas);
-
-              if (newTugas.length > 0) {
-                this.logger.info(
-                  `Found ${newTugas.length} new tugas in ${mk.nama}`
-                );
-
-                for (const tugas of newTugas) {
-                  await this.notifier.sendNewTugasNotification(
-                    user.userId,
-                    mk,
-                    tugas
-                  );
-                }
+            if (newTugas.length > 0) {
+              this.logger.info(`Found ${newTugas.length} new tugas in ${mk.nama}`);
+              for (const tugas of newTugas) {
+                await this.notifier.sendNewTugasNotification(user.userId, mk, tugas);
               }
-
-              // Store tugas data with berkas
-              userLastMateri[`tugas_${mk.materiId}`] = tugasList.map(t => ({
-                id: t.id,
-                title: t.title,
-                timestamp: t.timestamp,
-                isSubmitted: t.isSubmitted,
-                berkas: t.berkas || [],
-              }));
-            } catch (tugasError) {
-              this.logger.warn(`Failed to fetch tugas for ${mk.nama}:`, tugasError.message);
             }
+
+            userLastMateri[tugasCacheKey] = this.normalizeTugasForCache(tugasList);
           }
 
-          // Update last known materials with berkas
-          userLastMateri[mk.materiId] = materiList.map(m => ({
-            id: m.id,
-            title: m.title,
-            timestamp: m.timestamp,
-            berkas: m.berkas || [],
-          }));
-
-          await this.delay(800); // Shorter delay
-
+          await this.delay(800);
         } catch (error) {
-          this.logger.error(
-            `Error processing makul ${mk.nama}:`,
-            error
-          );
+          this.logger.error(`Error processing makul ${mk.nama}:`, error);
         }
       }
 
-      // Save updated user materi data
       await this.saveUserMateri(user.userId, userLastMateri);
 
-      // Send summary if there were new materials
       if (newMateriFound > 0) {
-        await this.notifier.sendCheckSummary(
-          user.userId,
-          newMateriFound,
-          absencesCompleted
-        );
+        await this.notifier.sendCheckSummary(user.userId, newMateriFound, absencesCompleted);
       }
 
       this.logger.success(
-        `Check completed for ${user.nim}: ` +
-        `${newMateriFound} new, ${absencesCompleted} absences`
+        `Check completed for ${user.nim}: ${newMateriFound} new materi, ${absencesCompleted} verified absence`
       );
-
     } catch (error) {
       this.logger.error(`Failed to check user ${user.nim}:`, error);
       await this.userManager.incrementStats(user.userId, 'failedAttempts');
@@ -249,13 +217,72 @@ class SchedulerService {
   }
 
   findNewMateri(currentList, lastKnownList) {
-    const lastKnownIds = new Set(lastKnownList.map(m => m.id));
-    return currentList.filter(m => !lastKnownIds.has(m.id));
+    const lastKnownKeys = new Set(lastKnownList.map((materi) => this.getMateriKey(materi)));
+    return currentList.filter((materi) => !lastKnownKeys.has(this.getMateriKey(materi)));
   }
 
   findNewTugas(currentList, lastKnownList) {
-    const lastKnownIds = new Set(lastKnownList.map(t => t.id));
-    return currentList.filter(t => !lastKnownIds.has(t.id));
+    const lastKnownKeys = new Set(lastKnownList.map((tugas) => this.getTugasKey(tugas)));
+    return currentList.filter((tugas) => !lastKnownKeys.has(this.getTugasKey(tugas)));
+  }
+
+  getMateriKey(materi) {
+    return String(materi.id || `${materi.title || ''}|${materi.waktuKehadiran || ''}`);
+  }
+
+  getTugasKey(tugas) {
+    return String(tugas.id || `${tugas.title || ''}|${tugas.waktu || ''}`);
+  }
+
+  normalizeMateriForCache(materiList) {
+    return materiList.map((materi) => ({
+      id: materi.id || null,
+      title: materi.title || null,
+      bahasan: materi.bahasan || null,
+      waktuKehadiran: materi.waktuKehadiran || null,
+      timestamp: materi.timestamp || new Date().toISOString(),
+      berkas: (materi.berkas || []).map((berkas) => ({
+        filename: berkas.filename || berkas.name || 'file',
+        url: berkas.url || null,
+      })),
+    }));
+  }
+
+  normalizeTugasForCache(tugasList) {
+    return tugasList.map((tugas) => ({
+      id: tugas.id || null,
+      title: tugas.title || null,
+      soal: tugas.soal || null,
+      waktu: tugas.waktu || null,
+      isActive: Boolean(tugas.isActive),
+      isSubmitted: Boolean(tugas.isSubmitted),
+      nilai: Number.isFinite(tugas.nilai) ? tugas.nilai : null,
+      timestamp: tugas.timestamp || new Date().toISOString(),
+      berkas: (tugas.berkas || []).map((berkas) => ({
+        filename: berkas.filename || berkas.name || 'file',
+        url: berkas.url || null,
+      })),
+    }));
+  }
+
+  parseCookies(rawCookies) {
+    if (!rawCookies) {
+      return null;
+    }
+
+    if (typeof rawCookies === 'string') {
+      try {
+        return JSON.parse(rawCookies);
+      } catch {
+        return null;
+      }
+    }
+
+    if (typeof rawCookies === 'object') {
+      return rawCookies;
+    }
+
+    return null;
   }
 
   async ensureMateriDirectory() {
@@ -263,162 +290,115 @@ class SchedulerService {
       await fs.mkdir(this.lastMateriDir, { recursive: true });
     } catch (error) {
       if (error.code !== 'EEXIST') {
-        this.logger.error('Failed to create materi directory:', error);
+        throw error;
       }
     }
+  }
+
+  getUserMateriPath(userId) {
+    return path.join(this.lastMateriDir, `${userId}.json`);
   }
 
   async loadUserMateri(userId) {
     try {
-      await this.ensureMateriDirectory();
-      const filePath = `${this.lastMateriDir}/${userId}.json`;
-      const data = await fs.readFile(filePath, 'utf-8');
+      const data = await fs.readFile(this.getUserMateriPath(userId), 'utf-8');
       return JSON.parse(data);
     } catch (error) {
-      if (error.code === 'ENOENT') {
-        return {};
+      if (error.code !== 'ENOENT') {
+        this.logger.warn(`Failed to load materi for user ${userId}: ${error.message}`);
       }
-      this.logger.warn(`Failed to load materi for user ${userId}:`, error.message);
-      return {};
+
+      return this.loadLegacyUserMateri(userId);
     }
   }
 
   async saveUserMateri(userId, data) {
+    await this.ensureMateriDirectory();
+    await fs.writeFile(this.getUserMateriPath(userId), JSON.stringify(data, null, 2), 'utf-8');
+  }
+
+  async loadLegacyUserMateri(userId) {
     try {
-      await this.ensureMateriDirectory();
-      const filePath = `${this.lastMateriDir}/${userId}.json`;
-      await fs.writeFile(
-        filePath,
-        JSON.stringify(data, null, 2),
-        'utf-8'
-      );
+      const raw = await fs.readFile(this.legacyMateriPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      return parsed[userId] || {};
+    } catch {
+      return {};
+    }
+  }
+
+  async migrateLegacyLastMateri() {
+    try {
+      const raw = await fs.readFile(this.legacyMateriPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+
+      if (!parsed || typeof parsed !== 'object') {
+        return;
+      }
+
+      let migrated = 0;
+      for (const [userId, userData] of Object.entries(parsed)) {
+        if (!userData || typeof userData !== 'object') {
+          continue;
+        }
+
+        const targetPath = this.getUserMateriPath(userId);
+        try {
+          await fs.access(targetPath);
+        } catch {
+          await fs.writeFile(targetPath, JSON.stringify(userData, null, 2), 'utf-8');
+          migrated += 1;
+        }
+      }
+
+      if (migrated > 0) {
+        this.logger.success(`Migrated ${migrated} user cache file(s) from legacy lastMateri.json`);
+      }
     } catch (error) {
-      this.logger.error(`Failed to save materi for user ${userId}:`, error);
-      throw error;
+      if (error.code !== 'ENOENT') {
+        this.logger.warn(`Failed to migrate legacy lastMateri cache: ${error.message}`);
+      }
     }
   }
 
   async checkTugasReminders() {
     try {
       const users = await this.userManager.getActiveUsers();
-      
+
       if (users.length === 0) {
-        this.logger.info('No active users for tugas reminder');
         return;
       }
-
-      this.logger.info(`Checking tugas reminders for ${users.length} user(s)`);
 
       for (const user of users) {
         try {
           const userLastMateri = await this.loadUserMateri(user.userId);
           const incompleteTugas = [];
 
-          // Check all tugas data
-          for (const key in userLastMateri) {
-            if (key.startsWith('tugas_')) {
-              const tugasList = userLastMateri[key];
-              
-              for (const tugas of tugasList) {
-                if (!tugas.isSubmitted && tugas.title) {
-                  const materiId = key.replace('tugas_', '');
-                  
-                  incompleteTugas.push({
-                    ...tugas,
-                    materiId,
-                  });
-                }
+          for (const key of Object.keys(userLastMateri)) {
+            if (!key.startsWith('tugas_')) {
+              continue;
+            }
+
+            const tugasList = userLastMateri[key];
+            for (const tugas of tugasList) {
+              if (!tugas.isSubmitted && tugas.title) {
+                incompleteTugas.push({
+                  ...tugas,
+                  materiId: key.replace('tugas_', ''),
+                });
               }
             }
           }
 
           if (incompleteTugas.length > 0) {
-            this.logger.info(
-              `Sending reminder for ${incompleteTugas.length} incomplete tugas to ${user.nim}`
-            );
-
-            await this.notifier.sendTugasReminder(
-              user.userId,
-              incompleteTugas
-            );
+            await this.notifier.sendTugasReminder(user.userId, incompleteTugas);
           }
-
-          await this.delay(2000);
-
         } catch (error) {
-          this.logger.error(`Error checking tugas for ${user.nim}:`, error);
+          this.logger.error(`Error checking tugas reminder for ${user.nim}:`, error);
         }
+
+        await this.delay(1500);
       }
-
-      this.logger.success('Tugas reminder check completed');
-
-    } catch (error) {
-      this.logger.error('Failed to check tugas reminders:', error);
-    }
-  }
-
-  findNewTugas(currentList, lastKnownList) {
-    const lastKnownIds = new Set(lastKnownList.map(t => t.id));
-    return currentList.filter(t => !lastKnownIds.has(t.id));
-  }
-
-  async checkTugasReminders() {
-    try {
-      const users = await this.userManager.getActiveUsers();
-      
-      if (users.length === 0) {
-        this.logger.info('No active users for tugas reminder');
-        return;
-      }
-
-      this.logger.info(`Checking tugas reminders for ${users.length} user(s)`);
-
-      for (const user of users) {
-        try {
-          const lastMateriData = await this.loadLastMateri();
-          const userLastMateri = lastMateriData[user.userId] || {};
-
-          const incompleteTugas = [];
-
-          // Check all tugas data
-          for (const key in userLastMateri) {
-            if (key.startsWith('tugas_')) {
-              const tugasList = userLastMateri[key];
-              
-              for (const tugas of tugasList) {
-                if (!tugas.isCompleted && tugas.title) {
-                  // Extract makul info from key
-                  const materiId = key.replace('tugas_', '');
-                  
-                  incompleteTugas.push({
-                    ...tugas,
-                    materiId,
-                  });
-                }
-              }
-            }
-          }
-
-          if (incompleteTugas.length > 0) {
-            this.logger.info(
-              `Sending reminder for ${incompleteTugas.length} incomplete tugas to ${user.nim}`
-            );
-
-            await this.notifier.sendTugasReminder(
-              user.userId,
-              incompleteTugas
-            );
-          }
-
-          await this.delay(2000);
-
-        } catch (error) {
-          this.logger.error(`Error checking tugas for ${user.nim}:`, error);
-        }
-      }
-
-      this.logger.success('Tugas reminder check completed');
-
     } catch (error) {
       this.logger.error('Failed to check tugas reminders:', error);
     }
@@ -428,151 +408,75 @@ class SchedulerService {
     try {
       this.logger.info(`Processing new materi: ${materi.title}`);
 
-      // Notify user about new materi
-      await this.notifier.sendNewMateriNotification(
-        user.userId,
-        makul,
-        materi
-      );
+      await this.notifier.sendNewMateriNotification(user.userId, makul, materi);
 
-      // Check if attendance is required and possible
       if (materi.isManual) {
         this.logger.info('Manual attendance by lecturer, skipping auto-absen');
-        return { success: false, reason: 'manual' };
+        return { success: false, verified: false, reason: 'manual' };
       }
 
       if (!materi.isActive) {
         this.logger.info('Attendance period ended, skipping');
-        return { success: false, reason: 'inactive' };
+        return { success: false, verified: false, reason: 'inactive' };
       }
 
-      if (!materi.links.diskusi) {
-        this.logger.warn('No discussion link found, cannot auto-absen');
-        return { success: false, reason: 'no_link' };
+      if (!materi.links?.diskusi) {
+        this.logger.warn('No diskusi link found, cannot auto-absen');
+        return { success: false, verified: false, reason: 'no_link' };
       }
 
-      // Perform auto-attendance
-      this.logger.info('Attempting auto-attendance...');
-      
-      await this.delay(2000); // Wait a bit before attending
-      
+      await this.delay(2000);
       const absenResult = await simaClient.absenMateri(materi.links.diskusi);
+      if (!absenResult.success) {
+        return { success: false, verified: false, reason: 'request_failed' };
+      }
 
-      if (absenResult.success) {
-        this.logger.success('Attendance request completed');
-        
-        // Wait longer for server to process attendance
-        await this.delay(4000);
+      await this.delay(3500);
 
-        // Verify attendance with retry
-        if (materi.links.kehadiran) {
-          let kehadiranCheck = null;
-          let verificationAttempts = 0;
-          const maxVerificationAttempts = 4; // Increased from 3
+      if (!materi.links?.kehadiran) {
+        await this.userManager.incrementStats(user.userId, 'totalAbsences');
+        await this.notifier.sendAbsenceUnverified(user.userId, makul, materi);
+        return { success: true, verified: false };
+      }
 
-          while (verificationAttempts < maxVerificationAttempts) {
-            verificationAttempts++;
-            
-            this.logger.info(
-              `Verifying attendance (attempt ${verificationAttempts}/${maxVerificationAttempts})...`
-            );
+      let kehadiranCheck = null;
+      const maxVerificationAttempts = 4;
 
-            kehadiranCheck = await simaClient.cekKehadiran(
-              materi.links.kehadiran,
-              user.nim
-            );
+      for (let attempt = 1; attempt <= maxVerificationAttempts; attempt += 1) {
+        this.logger.info(`Verifying attendance for ${materi.title} (${attempt}/${maxVerificationAttempts})`);
 
-            if (kehadiranCheck.isPresent) {
-              this.logger.success(
-                `✓ Attendance verified for ${materi.title}` +
-                (kehadiranCheck.timestamp ? ` at ${kehadiranCheck.timestamp}` : '')
-              );
-              
-              await this.userManager.incrementStats(user.userId, 'totalAbsences');
-              
-              await this.notifier.sendAbsenceSuccess(
-                user.userId,
-                makul,
-                materi,
-                kehadiranCheck.timestamp
-              );
-
-              return { success: true, verified: true };
-            }
-
-            // If not found, wait longer before retry
-            if (verificationAttempts < maxVerificationAttempts) {
-              this.logger.warn(
-                `Attendance not found yet, waiting before retry...`
-              );
-              await this.delay(6000); // Increased delay
-            }
-          }
-
-          // If still not verified after retries
-          this.logger.warn(
-            `⚠ Attendance not verified after ${maxVerificationAttempts} attempts. ` +
-            `This might be a parsing issue or server delay.`
-          );
-          
-          // Still notify user but mention it's unverified
-          await this.notifier.sendAbsenceUnverified(
+        kehadiranCheck = await simaClient.cekKehadiran(materi.links.kehadiran, user.nim);
+        if (kehadiranCheck.isPresent) {
+          await this.userManager.incrementStats(user.userId, 'totalAbsences');
+          await this.notifier.sendAbsenceSuccess(
             user.userId,
             makul,
-            materi
+            materi,
+            kehadiranCheck.timestamp
           );
 
-          return { success: true, verified: false };
-        } else {
-          // No verification link available
-          this.logger.info('No verification link available, assuming success');
-          await this.userManager.incrementStats(user.userId, 'totalAbsences');
-          return { success: true, verified: false };
+          return { success: true, verified: true };
         }
-      } else {
-        this.logger.error('Attendance request failed');
-        return { success: false, reason: 'request_failed' };
+
+        if (attempt < maxVerificationAttempts) {
+          await this.delay(5000);
+        }
       }
 
+      await this.notifier.sendAbsenceUnverified(user.userId, makul, materi);
+      return { success: true, verified: false };
     } catch (error) {
       this.logger.error(`Failed to process materi ${materi.title}:`, error);
       await this.notifier.sendError(
         user.userId,
         `Gagal memproses materi "${materi.title}": ${error.message}`
       );
-      return { success: false, reason: 'error', error: error.message };
-    }
-  }
-
-  async loadLastMateri() {
-    // Fallback untuk backward compatibility
-    try {
-      const data = await fs.readFile(`${this.lastMateriDir}.json`, 'utf-8');
-      return JSON.parse(data);
-    } catch (error) {
-      if (error.code === 'ENOENT') {
-        return {};
-      }
-      throw error;
-    }
-  }
-
-  async saveLastMateri(data) {
-    // Not used anymore, but kept for backward compatibility
-    try {
-      await fs.writeFile(
-        `${this.lastMateriDir}.json`,
-        JSON.stringify(data, null, 2),
-        'utf-8'
-      );
-    } catch (error) {
-      this.logger.error('Failed to save last materi:', error);
-      throw error;
+      return { success: false, verified: false, reason: 'error', error: error.message };
     }
   }
 
   async delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 

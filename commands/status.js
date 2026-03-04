@@ -32,12 +32,7 @@ const command = {
         return await interaction.editReply({ embeds: [embed] });
       }
 
-      // Calculate uptime
       const registeredDate = new Date(user.registeredAt);
-      const now = new Date();
-      const daysSinceRegistration = Math.floor(
-        (now - registeredDate) / (1000 * 60 * 60 * 24)
-      );
 
       // // Format last check time
       // let lastCheckStr = 'Belum pernah';
@@ -92,7 +87,7 @@ const command = {
           {
             name: '📈 Statistik',
             value:
-              `- Total Pengecekan: -${stats.totalChecks}\n` +
+              `- Total Pengecekan: ${stats.totalChecks}\n` +
               `- Total Absensi: ${stats.totalAbsences}\n` +
               `- Gagal: ${stats.failedAttempts}\n` +
               `- Success Rate: ${successRate}%`,

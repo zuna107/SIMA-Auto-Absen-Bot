@@ -13,6 +13,25 @@ import fs from 'fs/promises';
 
 const logger = new Logger('MateriCommand');
 const userManager = new UserManager();
+const getUserMateriPath = (userId) => `${config.paths.lastMateri}/${userId}.json`;
+
+async function loadUserMateriCache(userId) {
+  try {
+    const raw = await fs.readFile(getUserMateriPath(userId), 'utf-8');
+    return JSON.parse(raw);
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      throw error;
+    }
+    try {
+      const legacyRaw = await fs.readFile(config.paths.lastMateriLegacy, 'utf-8');
+      const legacy = JSON.parse(legacyRaw);
+      return legacy[userId] || {};
+    } catch {
+      return {};
+    }
+  }
+}
 
 const command = {
   data: new SlashCommandBuilder()
@@ -38,21 +57,6 @@ const command = {
           .setTimestamp();
 
         return await interaction.editReply({ embeds: [embed] });
-      }
-
-      // Load last materi data from user-specific file
-      const lastMateriDir = config.paths.lastMateri;
-      const userMateriPath = `${lastMateriDir}/${user.userId}.json`;
-      
-      let userLastMateri = {};
-      try {
-        const data = await fs.readFile(userMateriPath, 'utf-8');
-        userLastMateri = JSON.parse(data);
-      } catch (error) {
-        if (error.code !== 'ENOENT') {
-          throw error;
-        }
-        // File doesn't exist yet, use empty object
       }
 
       // Get makul list
@@ -150,11 +154,7 @@ const command = {
 
       if (!user) return;
 
-      // Load materi data
-      const lastMateriPath = config.paths.lastMateri;
-      const data = await fs.readFile(lastMateriPath, 'utf-8');
-      const lastMateriData = JSON.parse(data);
-      const userLastMateri = lastMateriData[user.userId] || {};
+      const userLastMateri = await loadUserMateriCache(user.userId);
 
       const materiList = userLastMateri[materiId] || [];
 
@@ -179,7 +179,7 @@ const command = {
 
         if (materi.berkas && materi.berkas.length > 0) {
           const berkasText = materi.berkas
-            .map(b => `- ${b.name}`)
+            .map(b => `- ${b.filename || b.name || 'file'}`)
             .join('\n');
           
           materiText += `\n\nBerkas:\n${berkasText}`;

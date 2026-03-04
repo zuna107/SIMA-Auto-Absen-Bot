@@ -109,21 +109,27 @@ class CommandHandler {
   }
 
   async handleInteraction(interaction) {
-    if (!interaction.isChatInputCommand() && !interaction.isModalSubmit()) {
-      return;
-    }
-
-    // Handle modal submissions
     if (interaction.isModalSubmit()) {
       return this.handleModalSubmit(interaction);
     }
 
-    // Handle slash commands
+    if (interaction.isStringSelectMenu()) {
+      return this.handleSelectMenu(interaction);
+    }
+
+    if (interaction.isButton()) {
+      return this.handleButton(interaction);
+    }
+
+    if (!interaction.isChatInputCommand()) {
+      return;
+    }
+
     const command = this.commands.get(interaction.commandName);
 
     if (!command) {
       this.logger.warn(`Unknown command: ${interaction.commandName}`);
-      return await interaction.reply({
+      return interaction.reply({
         content: 'Command not found.',
         ephemeral: true,
       });
@@ -147,6 +153,56 @@ class CommandHandler {
         await interaction.followUp(errorMessage);
       } else {
         await interaction.reply(errorMessage);
+      }
+    }
+  }
+
+  async handleSelectMenu(interaction) {
+    const customId = interaction.customId;
+
+    try {
+      if (customId.startsWith('materi_select_')) {
+        const materiCommand = this.commands.get('materi');
+        if (materiCommand?.handleSelectMenu) {
+          await materiCommand.handleSelectMenu(interaction);
+        }
+        return;
+      }
+
+      if (customId.startsWith('tugas_select_')) {
+        const tugasCommand = this.commands.get('tugas');
+        if (tugasCommand?.handleSelectMenu) {
+          await tugasCommand.handleSelectMenu(interaction);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Error handling select menu ${customId}:`, error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: 'Gagal memproses menu pilihan.',
+          ephemeral: true,
+        });
+      }
+    }
+  }
+
+  async handleButton(interaction) {
+    const customId = interaction.customId;
+
+    try {
+      if (customId.startsWith('tugas_dl_')) {
+        const tugasCommand = this.commands.get('tugas');
+        if (tugasCommand?.handleButton) {
+          await tugasCommand.handleButton(interaction);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Error handling button ${customId}:`, error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: 'Gagal memproses tombol.',
+          ephemeral: true,
+        });
       }
     }
   }

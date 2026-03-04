@@ -8,6 +8,14 @@ class NotificationService {
     this.logger = new Logger('Notifier');
   }
 
+  resolveColor(color, fallback = 0x3b82f6) {
+    if (typeof color === 'number') {
+      return color;
+    }
+
+    return fallback;
+  }
+
   async sendDM(userId, content) {
     try {
       const user = await this.client.users.fetch(userId);
@@ -22,7 +30,7 @@ class NotificationService {
   async sendNewMateriNotification(userId, makul, materi) {
     try {
       const embed = new EmbedBuilder()
-        .setColor(config.colors.info)
+        .setColor(this.resolveColor(config.colors.info))
         .setTitle('Materi Baru Terdeteksi')
         .setDescription(
           `Materi baru telah ditambahkan pada mata kuliah \`${makul.nama}\``
@@ -78,7 +86,7 @@ class NotificationService {
   async sendAbsenceSuccess(userId, makul, materi, timestamp) {
     try {
       const embed = new EmbedBuilder()
-        .setColor(config.colors.success)
+        .setColor(this.resolveColor(config.colors.success, 0x22c55e))
         .setTitle('Absen Berhasil!')
         .setDescription(
           `Absensi berhasil dilakukan untuk materi \`${materi.title}\``
@@ -112,7 +120,7 @@ class NotificationService {
   async sendCheckSummary(userId, newMateriCount, absencesCount) {
     try {
       const embed = new EmbedBuilder()
-        .setColor(config.colors.primary)
+        .setColor(this.resolveColor(config.colors.primary, 0x6366f1))
         .setTitle('Ringkasan Pengecekan')
         .setDescription(
           `Pengecekan otomatis selesai dilakukan.`
@@ -147,7 +155,7 @@ class NotificationService {
   async sendError(userId, errorMessage) {
     try {
       const embed = new EmbedBuilder()
-        .setColor(config.colors.error)
+        .setColor(this.resolveColor(config.colors.error, 0xef4444))
         .setTitle('Terjadi Kesalahan')
         .setDescription(
           `Sistem mengalami kesalahan saat memproses data Anda:\n\n` +
@@ -169,7 +177,7 @@ class NotificationService {
   async sendRegistrationSuccess(userId, nim, makulCount) {
     try {
       const embed = new EmbedBuilder()
-        .setColor(config.colors.success)
+        .setColor(this.resolveColor(config.colors.success, 0x22c55e))
         .setTitle('Registrasi Berhasil')
         .setDescription(
           'Akun SIMA Anda telah berhasil didaftarkan dalam sistem absensi otomatis!'
@@ -206,7 +214,7 @@ class NotificationService {
   async sendLoginExpired(userId) {
     try {
       const embed = new EmbedBuilder()
-        .setColor(config.colors.warning)
+        .setColor(this.resolveColor(config.colors.warning, 0xf59e0b))
         .setTitle('Sesi Login Kadaluarsa')
         .setDescription(
           'Sesi login SIMA Anda telah kadaluarsa. Sistem mencoba login ulang secara otomatis.'
@@ -221,6 +229,76 @@ class NotificationService {
       this.logger.info(`Sent login expired notification to ${userId}`);
     } catch (error) {
       this.logger.error('Failed to send login expired notification:', error);
+    }
+  }
+
+  async sendAbsenceUnverified(userId, makul, materi) {
+    try {
+      const embed = new EmbedBuilder()
+        .setColor(this.resolveColor(config.colors.warning, 0xf59e0b))
+        .setTitle('Absensi Terkirim, Belum Terverifikasi')
+        .setDescription(
+          `Permintaan absensi sudah dikirim untuk materi \`${materi.title}\`, ` +
+          'tetapi belum terlihat pada daftar kehadiran saat pengecekan.'
+        )
+        .addFields(
+          { name: 'Mata Kuliah', value: makul.nama || '-', inline: false },
+          { name: 'Materi', value: materi.title || '-', inline: false },
+          { name: 'Saran', value: 'Cek manual di SIMA beberapa menit lagi.', inline: false }
+        )
+        .setTimestamp();
+
+      await this.sendDM(userId, { embeds: [embed] });
+      this.logger.warn(`Sent unverified absence notification to ${userId}`);
+    } catch (error) {
+      this.logger.error('Failed to send unverified absence notification:', error);
+    }
+  }
+
+  async sendNewTugasNotification(userId, makul, tugas) {
+    try {
+      const embed = new EmbedBuilder()
+        .setColor(this.resolveColor(config.colors.info))
+        .setTitle('Tugas Baru Terdeteksi')
+        .setDescription(`Tugas baru ditemukan pada mata kuliah \`${makul.nama}\``)
+        .addFields(
+          { name: 'Mata Kuliah', value: makul.nama || '-', inline: false },
+          { name: 'Judul Tugas', value: tugas.title || '-', inline: false },
+          { name: 'Waktu', value: tugas.waktu || '-', inline: false },
+          { name: 'Status', value: tugas.isSubmitted ? 'Sudah dikerjakan' : 'Belum dikerjakan', inline: true }
+        )
+        .setTimestamp();
+
+      await this.sendDM(userId, { embeds: [embed] });
+      this.logger.info(`Sent new tugas notification to ${userId}: ${tugas.title}`);
+    } catch (error) {
+      this.logger.error('Failed to send new tugas notification:', error);
+    }
+  }
+
+  async sendTugasReminder(userId, tugasList) {
+    try {
+      const maxItems = 10;
+      const preview = tugasList
+        .slice(0, maxItems)
+        .map((tugas, index) => `${index + 1}. ${tugas.title || 'Tanpa judul'}`)
+        .join('\n');
+      const hasMore = tugasList.length > maxItems;
+
+      const embed = new EmbedBuilder()
+        .setColor(this.resolveColor(config.colors.warning, 0xf59e0b))
+        .setTitle('Reminder Tugas Belum Selesai')
+        .setDescription(
+          `Terdapat ${tugasList.length} tugas yang belum dikumpulkan.\n\n${preview}` +
+          (hasMore ? `\n...dan ${tugasList.length - maxItems} tugas lainnya` : '')
+        )
+        .setFooter({ text: 'Gunakan /tugas untuk melihat detail lengkap.' })
+        .setTimestamp();
+
+      await this.sendDM(userId, { embeds: [embed] });
+      this.logger.info(`Sent tugas reminder to ${userId} (${tugasList.length} items)`);
+    } catch (error) {
+      this.logger.error('Failed to send tugas reminder:', error);
     }
   }
 }

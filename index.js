@@ -1,7 +1,5 @@
 import { Client, GatewayIntentBits, Events, ActivityType } from 'discord.js';
 import { config } from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 
 // Import handlers
@@ -9,9 +7,6 @@ import CommandHandler from './handlers/commandsHandler.js';
 import SchedulerService from './services/scheduler.js';
 import Logger from './utils/logger.js';
 import configData from './config.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 config();
 
@@ -50,6 +45,7 @@ class AbsenBot {
       './public',
       './public/global',
       './public/logs',
+      this.config.paths.lastMateri,
     ];
 
     for (const dir of dirs) {
@@ -62,8 +58,8 @@ class AbsenBot {
 
     // Check JSON files exist
     const files = {
-      './public/user.json': '{}',
-      './public/lastMateri.json': '{}',
+      [this.config.paths.users]: '{}',
+      [this.config.paths.lastMateriLegacy]: '{}',
     };
 
     for (const [file, defaultContent] of Object.entries(files)) {
@@ -92,6 +88,7 @@ class AbsenBot {
       // Start scheduler
       this.scheduler = new SchedulerService(this.client);
       await this.scheduler.start();
+      this.client.schedulerService = this.scheduler;
 
       this.logger.success('Bot is ready and scheduler started!');
     });

@@ -95,18 +95,21 @@ class UserManager {
         return null;
       }
 
-      // Decrypt sensitive data
-      return {
-        ...userData,
-        password: this.decrypt(userData.encryptedPassword),
-        cookies: userData.encryptedCookies 
-          ? this.decrypt(userData.encryptedCookies) 
-          : null,
-      };
+      return this.mapStoredUser(userData);
     } catch (error) {
       this.logger.error(`Failed to get user ${userId}:`, error);
       throw error;
     }
+  }
+
+  mapStoredUser(userData) {
+    return {
+      ...userData,
+      password: this.decrypt(userData.encryptedPassword),
+      cookies: userData.encryptedCookies
+        ? this.decrypt(userData.encryptedCookies)
+        : null,
+    };
   }
 
   async saveUser(userData) {
@@ -186,14 +189,7 @@ class UserManager {
   async getAllUsers() {
     try {
       const users = await this.loadUsers();
-      const userList = [];
-
-      for (const userId in users) {
-        const userData = await this.getUser(userId);
-        userList.push(userData);
-      }
-
-      return userList;
+      return Object.values(users).map((userData) => this.mapStoredUser(userData));
     } catch (error) {
       this.logger.error('Failed to get all users:', error);
       throw error;

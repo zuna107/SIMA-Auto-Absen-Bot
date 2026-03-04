@@ -229,7 +229,7 @@ class SIMAClient {
         
         this.logger.debug('Session cookies obtained:', Object.keys(this.cookies).join(', '));
 
-        // Step 2: Get FCKING CAPTCHA image
+        // Step 2: Get CAPTCHA image
         await this.delay();
         const captchaResponse = await this.axiosInstance.get(
           config.sima.captchaUrl,
@@ -239,7 +239,7 @@ class SIMAClient {
           }
         );
 
-        // Step 3: Solve FCKING CAPTCHA BRO
+        // Step 3: Solve CAPTCHA
         const captchaAnswer = await this.solveCaptcha(captchaResponse.data);
         this.logger.success(`CAPTCHA solved: ${captchaAnswer}`);
 
@@ -543,6 +543,23 @@ class SIMAClient {
         const hasFormJawabUlang = $element.find('button').text().includes('Form Jawab Ulang');
         const isSubmitted = hasJawaban || hasFormJawabUlang;
 
+        // Extract lampiran tugas
+        const berkas = [];
+        $element.find('a[href*="materi_view.php"]').each((_, link) => {
+          const $link = $(link);
+          const href = $link.attr('href');
+          const filename = $link.text().trim();
+
+          if (!href || !filename) {
+            return;
+          }
+
+          berkas.push({
+            filename,
+            url: this.resolveKuliahUrl(href),
+          });
+        });
+
         // Extract nilai if available
         let nilai = null;
         $element.find('.form-group').each((_, group) => {
@@ -571,6 +588,7 @@ class SIMAClient {
           isActive,
           isSubmitted,
           nilai,
+          berkas,
           timestamp: new Date().toISOString(),
         };
 
@@ -612,6 +630,47 @@ class SIMAClient {
     } catch (error) {
       this.logger.error('Failed to absen materi:', error);
       throw error;
+    }
+  }
+
+  resolveKuliahUrl(href) {
+    if (!href) return null;
+
+    if (/^https?:\/\//i.test(href)) {
+      return href;
+    }
+
+    if (href.startsWith('/')) {
+      return `${config.sima.baseUrl}${href}`;
+    }
+
+    if (href.startsWith('kuliah/')) {
+      return `${config.sima.baseUrl}/${href}`;
+    }
+
+    return `${config.sima.baseUrl}/kuliah/${href}`;
+  }
+
+  async downloadBerkas(url, filename = 'file') {
+    try {
+      this.logger.info(`Downloading file: ${filename}`);
+
+      await this.delay();
+      const response = await this.axiosInstance.get(url, {
+        headers: { Cookie: this.getCookieString() },
+        responseType: 'arraybuffer',
+      });
+
+      return {
+        success: true,
+        data: Buffer.from(response.data),
+      };
+    } catch (error) {
+      this.logger.error(`Failed to download file ${filename}:`, error);
+      return {
+        success: false,
+        error: error.message || 'Download failed',
+      };
     }
   }
 
