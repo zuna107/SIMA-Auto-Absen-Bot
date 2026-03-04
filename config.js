@@ -5,8 +5,8 @@ dotenvConfig();
 const config = {
   // Discord configuration
   token: process.env.DISCORD_TOKEN,
-  clientId: process.env.CLIENT_ID || '1179992443446370356',
-  ownerId: process.env.OWNER_ID || '948093919835590666',
+  clientId: process.env.CLIENT_ID || 'your_client_id',
+  ownerId: process.env.OWNER_ID || 'your_discord_id',
 
   // File paths
   paths: {
